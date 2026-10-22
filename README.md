@@ -72,7 +72,7 @@ Démarrez votre machine avec une image d'installation récente d'Arch Linux et c
 Clonez ou téléchargez les scripts dans votre environnement live :
 
 ```bash
-git clone https://github.com/<votre-user>/archfi.git
+git clone https://github.com/opentux/archfi-modernized.git
 cd archfi
 chmod +x archfi archdi
 ./archfi
