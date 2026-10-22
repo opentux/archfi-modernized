@@ -12,11 +12,68 @@
 # reference : https://wiki.archlinux.org/index.php/Installation_guide
 
 
-apptitle="Arch Linux Fast Install (archfi) - Version: 2022.11.21.01.44.43 (GPLv3)"
+apptitle="Arch Linux Fast Install (archfi) - Version: 2026.10.22 (Modernized GPLv3)"
 baseurl=https://raw.githubusercontent.com/MatMoul/archfi/master
+scriptdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cpl=0
 skipfont="0"
 fspkgs=""
+btrfs_root_subvols=0
+btrfs_opts="rw,noatime,commit=120,space_cache=v2,compress=zstd:1"
+btrfs_opts_configured=0
+chosen_kernel=""
+
+get_partition_name(){
+	local dev="${1}"
+	local pnum="${2}"
+	if [[ "${dev}" =~ [0-9]$ ]]; then
+		echo "${dev}p${pnum}"
+	else
+		echo "${dev}${pnum}"
+	fi
+}
+
+choose_btrfs_mount_opts(){
+	options_btrfs_opts=()
+	options_btrfs_opts+=("compress=zstd:1" "${txtbtrfsoptcompress}" on)
+	options_btrfs_opts+=("nodatacow" "${txtbtrfsoptnodatacow}" off)
+	options_btrfs_opts+=("nodatasum" "${txtbtrfsoptnodatasum}" off)
+	sel_btrfs_opts=$(dialog --backtitle "${apptitle}" --title "${txtbtrfsmountopts}" --checklist "${txtbtrfsmountoptsdesc}" 0 0 0 \
+		"${options_btrfs_opts[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ "$?" = "0" ]; then
+		btrfs_opts="rw,noatime,commit=120,space_cache=v2"
+		for opt in ${sel_btrfs_opts}; do
+			clean_opt=$(echo ${opt} | sed 's/"//g')
+			btrfs_opts="${btrfs_opts},${clean_opt}"
+		done
+		btrfs_opts_configured=1
+	fi
+}
+
+optimize_pacman(){
+	local conf="${1:-/etc/pacman.conf}"
+	if [ -f "$conf" ]; then
+		sed -i 's/^#Color/Color/' "$conf"
+		grep -q "^Color" "$conf" || sed -i '/^#Misc options/a Color' "$conf"
+		grep -q "ILoveCandy" "$conf" || sed -i '/Color/a ILoveCandy' "$conf"
+		sed -i 's/^#VerbosePkgLists/VerbosePkgLists/' "$conf"
+		if grep -q "ParallelDownloads" "$conf"; then
+			sed -i 's/.*ParallelDownloads.*/ParallelDownloads = 10/' "$conf"
+		else
+			sed -i '/^Color/a ParallelDownloads = 10' "$conf"
+		fi
+		if grep -q "^#\[multilib\]" "$conf"; then
+			sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$conf"
+		elif ! grep -q "^\[multilib\]" "$conf"; then
+			cat << 'EOF' >> "$conf"
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+EOF
+		fi
+	fi
+}
 
 
 # --------------------------------------------------------
@@ -80,21 +137,8 @@ mainmenu(){
 
 chooselanguage(){
 	options=()
-	options+=("Arabic" "(By Mohammad Alawadi)")
-	options+=("Brazilian" "(By MaxWilliamJF)")
-	options+=("Dutch" "(By bowero)")
-	options+=("English" "(By MatMoul)")
-	options+=("French" "(By MatMoul)")
-	options+=("German" "(By untergrundbiber)")
-	options+=("Greek" "(By quelotic)")
-	options+=("Italian" "(By thegoldgoat)")
-	options+=("Hungarian" "(By KardiWeb)")
-	options+=("Norwegian" "(By mrboen94)")
-	options+=("Polish" "(By dawidd6)")
-	options+=("Portuguese" "(By hugok)")
-	options+=("Russian" "(By Anonymous_Prodject)")
-	options+=("Spanish" "(By Mystogab)")
-	options+=("Turkish" "(By c0b41)")
+	options+=("English" "English")
+	options+=("French" "Français")
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtlanguage}" --menu "" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
@@ -102,14 +146,20 @@ chooselanguage(){
 		clear
 		if [ "${sel}" = "English" ]; then
 			loadstrings
+		elif [ -f "${scriptdir}/lng/${sel}" ]; then
+			eval $(cat "${scriptdir}/lng/${sel}" | sed '/^#/ d')
+		elif [ -f "./lng/${sel}" ]; then
+			eval $(cat "./lng/${sel}" | sed '/^#/ d')
+		elif [ -f "/root/lng/${sel}" ]; then
+			eval $(cat "/root/lng/${sel}" | sed '/^#/ d')
 		else
-			eval $(curl -L ${baseurl}/lng/${sel} | sed '/^#/ d')
+			eval $(curl -s -L ${baseurl}/lng/${sel} | sed '/^#/ d')
 		fi
-		if [ "${skipfont}" = "0" ]; then
-			eval $(setfont ${font})
+		if [ "${skipfont}" = "0" ] && [ -n "${font}" ]; then
+			eval $(setfont ${font} 2>/dev/null)
 		fi
 		font=
-		if [ "$(cat /etc/locale.gen | grep ""#${locale}"")" != "" ]; then
+		if [ -n "${locale}" ] && [ "$(cat /etc/locale.gen 2>/dev/null | grep "#${locale}")" != "" ]; then
 			sed -i "/#${locale}/s/^#//g" /etc/locale.gen
 			locale-gen
 		fi
@@ -261,15 +311,9 @@ diskpartautodos(){
 			sleep 1
 			echo ""
 			pressanykey
-			if [ "${device::8}" == "/dev/nvm" ]; then
-				bootdev=${device}"p1"
-				swapdev=${device}"p2"
-				rootdev=${device}"p3"
-			else
-				bootdev=${device}"1"
-				swapdev=${device}"2"
-				rootdev=${device}"3"
-			fi
+			bootdev=$(get_partition_name "${device}" 1)
+			swapdev=$(get_partition_name "${device}" 2)
+			rootdev=$(get_partition_name "${device}" 3)
 			efimode="0"
 		fi
 	fi
@@ -294,15 +338,9 @@ diskpartautogpt(){
 			sgdisk ${device} -n=4:0:0 -c=0:root
 			echo ""
 			pressanykey
-			if [ "${device::8}" == "/dev/nvm" ]; then
-				bootdev=${device}"p2"
-				swapdev=${device}"p3"
-				rootdev=${device}"p4"
-			else
-				bootdev=${device}"2"
-				swapdev=${device}"3"
-				rootdev=${device}"4"
-			fi
+			bootdev=$(get_partition_name "${device}" 2)
+			swapdev=$(get_partition_name "${device}" 3)
+			rootdev=$(get_partition_name "${device}" 4)
 			efimode="0"
 		fi
 	fi
@@ -325,15 +363,9 @@ diskpartautoefi(){
 			sgdisk ${device} -n=3:0:0 -c=0:root
 			echo ""
 			pressanykey
-			if [ "${device::8}" == "/dev/nvm" ]; then
-				bootdev=${device}"p1"
-				swapdev=${device}"p2"
-				rootdev=${device}"p3"
-			else
-				bootdev=${device}"1"
-				swapdev=${device}"2"
-				rootdev=${device}"3"
-			fi
+			bootdev=$(get_partition_name "${device}" 1)
+			swapdev=$(get_partition_name "${device}" 2)
+			rootdev=$(get_partition_name "${device}" 3)
 			efimode="1"
 		fi
 	fi
@@ -356,15 +388,9 @@ diskpartautoefiusb(){
 			echo -e "r\nh\n3\nN\n\nY\nN\nw\nY\n" | gdisk ${device}
 			echo ""
 			pressanykey
-			if [ "${device::8}" == "/dev/nvm" ]; then
-				bootdev=${device}"p1"
-				swapdev=
-				rootdev=${device}"p3"
-			else
-				bootdev=${device}"1"
-				swapdev=
-				rootdev=${device}"3"
-			fi
+			bootdev=$(get_partition_name "${device}" 1)
+			swapdev=
+			rootdev=$(get_partition_name "${device}" 3)
 			efimode="2"
 		fi
 	fi
@@ -578,7 +604,6 @@ formatdevice(){
 	options+=("xfs" "")
 	options+=("f2fs" "")
 	options+=("jfs" "")
-	options+=("reiserfs" "")
 	if [ ! "${3}" = "noluks" ]; then
 		options+=("luks" "encrypted")
 	fi
@@ -596,15 +621,35 @@ formatdevice(){
 			fspkgs="${fspkgs[@]} btrfs-progs"
 			echo "mkfs.btrfs -f ${2}"
 			mkfs.btrfs -f ${2}
+			choose_btrfs_mount_opts
 			if [ "${1}" = "root" ]; then
-				echo "mount ${2} /mnt"
-				echo "btrfs subvolume create /mnt/root"
-				echo "btrfs subvolume set-default /mnt/root"
-				echo "umount /mnt"
-				mount ${2} /mnt
-				btrfs subvolume create /mnt/root
-				btrfs subvolume set-default /mnt/root
-				umount /mnt
+				options_btrfs=()
+				options_btrfs+=("subvolumes" "${txtbtrfssubvols}")
+				options_btrfs+=("simple" "${txtbtrfssimple}")
+				btrfs_choice=$(dialog --backtitle "${apptitle}" --title "${txtbtrfslayout}" --menu "${txtbtrfsconfirm//%1/${2}}" 0 0 0 \
+					"${options_btrfs[@]}" \
+					3>&1 1>&2 2>&3)
+				if [ "${btrfs_choice}" = "subvolumes" ]; then
+					echo "Creating Btrfs subvolumes layout (@, @home, @snapshots, @var_log, @pkg)..."
+					mount ${2} /mnt
+					btrfs subvolume create /mnt/@
+					btrfs subvolume create /mnt/@home
+					btrfs subvolume create /mnt/@snapshots
+					btrfs subvolume create /mnt/@var_log
+					btrfs subvolume create /mnt/@pkg
+					umount /mnt
+					btrfs_root_subvols=1
+				else
+					echo "mount ${2} /mnt"
+					echo "btrfs subvolume create /mnt/root"
+					echo "btrfs subvolume set-default /mnt/root"
+					echo "umount /mnt"
+					mount ${2} /mnt
+					btrfs subvolume create /mnt/root
+					btrfs subvolume set-default /mnt/root
+					umount /mnt
+					btrfs_root_subvols=0
+				fi
 			fi
 		;;
 		ext4)
@@ -633,11 +678,6 @@ formatdevice(){
 			fspkgs="${fspkgs[@]} jfsutils"
 			echo "mkfs.jfs -f ${2}"
 			mkfs.jfs -f ${2}
-		;;
-		reiserfs)
-			fspkgs="${fspkgs[@]} reiserfsprogs"
-			echo "mkfs.reiserfs -f ${2}"
-			mkfs.reiserfs -f ${2}
 		;;
 		luks)
 			echo "${txtcreateluksdevice}"
@@ -706,11 +746,50 @@ formatdevice(){
 
 mountparts(){
 	clear
-	echo "mount ${rootdev} /mnt"
-	mount ${rootdev} /mnt
-	echo "mkdir /mnt/{boot,home}"
-	mkdir /mnt/{boot,home} 2>/dev/null
+	# Auto-detect Btrfs @ subvolume on rootdev
+	fstype=$(blkid -s TYPE -o value ${rootdev} 2>/dev/null)
+	if [ "${fstype}" = "btrfs" ]; then
+		mount ${rootdev} /mnt 2>/dev/null
+		if [ -d "/mnt/@" ]; then
+			btrfs_root_subvols=1
+		fi
+		umount /mnt 2>/dev/null
+		if [ "${btrfs_opts_configured}" != "1" ]; then
+			choose_btrfs_mount_opts
+		fi
+	fi
+
+	if [ "${btrfs_root_subvols}" = "1" ]; then
+		echo "mount -o ${btrfs_opts},subvol=@ ${rootdev} /mnt"
+		mount -o ${btrfs_opts},subvol=@ ${rootdev} /mnt
+		mkdir -p /mnt/{boot,home,.snapshots,var/log,var/cache/pacman/pkg}
+		if [ -z "${homedev}" ]; then
+			echo "mount -o ${btrfs_opts},subvol=@home ${rootdev} /mnt/home"
+			mount -o ${btrfs_opts},subvol=@home ${rootdev} /mnt/home
+		fi
+		echo "mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots"
+		mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots
+		echo "mount -o ${btrfs_opts},subvol=@var_log ${rootdev} /mnt/var/log"
+		mount -o ${btrfs_opts},subvol=@var_log ${rootdev} /mnt/var/log
+		echo "mount -o ${btrfs_opts},subvol=@pkg ${rootdev} /mnt/var/cache/pacman/pkg"
+		mount -o ${btrfs_opts},subvol=@pkg ${rootdev} /mnt/var/cache/pacman/pkg
+	else
+		if [ "${fstype}" = "btrfs" ]; then
+			echo "mount -o ${btrfs_opts} ${rootdev} /mnt"
+			mount -o ${btrfs_opts} ${rootdev} /mnt
+		elif [ "${fstype}" = "ext4" ] || [ "${fstype}" = "xfs" ]; then
+			echo "mount -o rw,noatime ${rootdev} /mnt"
+			mount -o rw,noatime ${rootdev} /mnt
+		else
+			echo "mount ${rootdev} /mnt"
+			mount ${rootdev} /mnt
+		fi
+		echo "mkdir -p /mnt/{boot,home}"
+		mkdir -p /mnt/{boot,home} 2>/dev/null
+	fi
+
 	if [ ! "${bootdev}" = "" ]; then
+		mkdir -p /mnt/boot
 		echo "mount ${bootdev} /mnt/boot"
 		mount ${bootdev} /mnt/boot
 	fi
@@ -719,8 +798,18 @@ mountparts(){
 		swapon ${swapdev}
 	fi
 	if [ ! "${homedev}" = "" ]; then
-		echo "mount ${homedev} /mnt/home"
-		mount ${homedev} /mnt/home
+		home_fstype=$(blkid -s TYPE -o value ${homedev} 2>/dev/null)
+		mkdir -p /mnt/home
+		if [ "${home_fstype}" = "btrfs" ]; then
+			echo "mount -o ${btrfs_opts} ${homedev} /mnt/home"
+			mount -o ${btrfs_opts} ${homedev} /mnt/home
+		elif [ "${home_fstype}" = "ext4" ] || [ "${home_fstype}" = "xfs" ]; then
+			echo "mount -o rw,noatime ${homedev} /mnt/home"
+			mount -o rw,noatime ${homedev} /mnt/home
+		else
+			echo "mount ${homedev} /mnt/home"
+			mount ${homedev} /mnt/home
+		fi
 	fi
 	pressanykey
 	installmenu
@@ -825,7 +914,7 @@ filtermirrorlist() {
 }
 
 paralleldownloads() {
-		numpkg=$(dialog --backtitle "${apptitle}" --title "${txtparallelprompt}" --inputbox "" 0 0 "5" 3>&1 1>&2 2>&3)
+		numpkg=$(dialog --backtitle "${apptitle}" --title "${txtparallelprompt}" --inputbox "" 0 0 "10" 3>&1 1>&2 2>&3)
                 if [ "$?" = "0" ]; then
 			if [[ "$numpkg" =~ ^[1-9][0-9]*$ ]] ; then
 				sed -i "s/.*ParallelDownloads.*/ParallelDownloads = ${numpkg}/" /etc/pacman.conf
@@ -841,7 +930,7 @@ paralleldownloads() {
 }
 
 installbase(){
-	pkgs="base"
+	pkgs="base base-devel"
 	options=()
 	options+=("linux" "")
 	options+=("linux-lts" "")
@@ -852,12 +941,26 @@ installbase(){
 		3>&1 1>&2 2>&3)
 	if [ "$?" = "0" ]; then
 		pkgs+=" ${sel}"
+		chosen_kernel="${sel}"
 	else
 		return 1
 	fi
 	
+	# CPU Microcode auto-detection
+	cpu_vendor=$(grep -m1 "vendor_id" /proc/cpuinfo 2>/dev/null | awk '{print $3}')
+	intel_state="off"
+	amd_state="off"
+	if [ "$cpu_vendor" = "GenuineIntel" ]; then
+		intel_state="on"
+	elif [ "$cpu_vendor" = "AuthenticAMD" ]; then
+		amd_state="on"
+	fi
+
 	options=()
 	options+=("linux-firmware" "(${txtoptional})" on)
+	options+=("intel-ucode" "Intel CPU Microcode" ${intel_state})
+	options+=("amd-ucode" "AMD CPU Microcode" ${amd_state})
+	options+=("sof-firmware" "Sound Open Firmware" off)
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtinstallarchlinuxfirmwares}" --checklist "" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
@@ -869,12 +972,12 @@ installbase(){
 	done
 
 	options=()
-	if [[ "${fspkgs}" == *"dosfstools"* ]]; then
+	if [[ "${fspkgs}" == *"dosfstools"* ]] || [ "${eficomputer}" = "1" ]; then
 		options+=("dosfstools" "" on)
 	else
 		options+=("dosfstools" "" off)
 	fi
-	if [[ "${fspkgs}" == *"btrfs-progs"* ]]; then
+	if [[ "${fspkgs}" == *"btrfs-progs"* ]] || [ "${btrfs_root_subvols}" = "1" ]; then
 		options+=("btrfs-progs" "" on)
 	else
 		options+=("btrfs-progs" "" off)
@@ -894,13 +997,8 @@ installbase(){
 	else
 		options+=("jfsutils" "" off)
 	fi
-	if [[ "${fspkgs}" == *"reiserfsprogs"* ]]; then
-		options+=("reiserfsprogs" "" on)
-	else
-		options+=("reiserfsprogs" "" off)
-	fi
 	options+=("lvm2" "" off)
-	options+=("dmraid" "" off)
+	options+=("mdadm" "" off)
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtinstallarchlinuxfilesystems}" --checklist "" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
@@ -932,6 +1030,8 @@ installbase(){
 	clear
 	echo "pacstrap /mnt ${pkgs}"
 	pacstrap /mnt ${pkgs}
+	echo "Optimizing /mnt/etc/pacman.conf (Color, ILoveCandy, ParallelDownloads=10, Multilib)..."
+	optimize_pacman "/mnt/etc/pacman.conf"
 	if [ ! -z $numpkg ]; then
 		sed -i "s/.*ParallelDownloads.*/ParallelDownloads = ${numpkg}/" /mnt/etc/pacman.conf	
 	fi	
@@ -1089,11 +1189,18 @@ archchroot(){
 	echo "arch-chroot /mnt /root"
 	cp ${0} /mnt/root
 	chmod 755 /mnt/root/$(basename "${0}")
+	if [ -d "${scriptdir}/lng" ]; then
+		cp -r "${scriptdir}/lng" /mnt/root/
+	fi
+	if [ -f "${scriptdir}/archdi" ]; then
+		cp "${scriptdir}/archdi" /mnt/root/archdi
+		chmod 755 /mnt/root/archdi
+	fi
 	echo "dialog is required for archfi, it will be installed as dep. Then it will removed when cleaning orphan."
 	echo "arch-chroot /mnt pacman -S --asdeps --needed --noconfirm dialog"
 	arch-chroot /mnt pacman -S --asdeps --needed --noconfirm dialog
 	arch-chroot /mnt /root/$(basename "${0}") --chroot ${1} ${2}
-	rm /mnt/root/$(basename "${0}")
+	rm -rf /mnt/root/$(basename "${0}") /mnt/root/lng
 	echo "exit"
 }
 
@@ -1318,8 +1425,12 @@ archgencrypttab(){
 
 archgenmkinitcpioluks(){
 	clear
-	echo "sed -i \"s/block filesystems/block encrypt filesystems/g\" /mnt/etc/mkinitcpio.conf"
-	sed -i "s/block filesystems/block encrypt filesystems/g" /mnt/etc/mkinitcpio.conf
+	echo "Adding encrypt hook to /mnt/etc/mkinitcpio.conf"
+	if grep -q "block filesystems" /mnt/etc/mkinitcpio.conf; then
+		sed -i "s/block filesystems/block encrypt filesystems/g" /mnt/etc/mkinitcpio.conf
+	elif grep -q "block" /mnt/etc/mkinitcpio.conf && ! grep -q "encrypt" /mnt/etc/mkinitcpio.conf; then
+		sed -i "s/block/block encrypt/g" /mnt/etc/mkinitcpio.conf
+	fi
 	archchroot genmkinitcpio
 	pressanykey
 }
@@ -1340,8 +1451,8 @@ archeditmkinitcpio(){
 	fi
 }
 archgenmkinitcpiochroot(){
-	echo "mkinitcpio -p linux"
-	mkinitcpio -p linux
+	echo "mkinitcpio -P"
+	mkinitcpio -P
 	exit
 }
 
@@ -1670,42 +1781,71 @@ archsystemdinstall(){
 	clear
 	archchroot systemdbootloaderinstall ${realrootdev}
 
-	partuuid=$(blkid -s PARTUUID -o value ${realrootdev})
-	parttype=$(blkid -s TYPE -o value ${rootdev})
+	partuuid=$(blkid -s PARTUUID -o value ${realrootdev} 2>/dev/null)
+	parttype=$(blkid -s TYPE -o value ${rootdev} 2>/dev/null)
 
-	echo "cp /mnt/usr/share/systemd/bootctl/arch.conf /mnt/boot/loader/entries"
-	echo "echo \"timeout 2\" >> /mnt/boot/loader/loader.conf"
-	echo "cp /mnt/usr/share/systemd/bootctl/loader.conf /mnt/boot/loader"
-	if [ "${luksroot}" = "1" ]; then
-		cryptuuid=$(blkid -s UUID -o value ${realrootdev})
-		echo "sed -i \"s/PARTUUID=XXXX/\\/dev\\/mapper\\/root/\" /mnt/boot/loader/entries/arch.conf"
-		echo "sed -i \"s/XXXX/${parttype}/\" /mnt/boot/loader/entries/arch.conf"
-		echo "sed -i \"s/root=/cryptdevice=UUID=${cryptuuid}:root root=/\" /mnt/boot/loader/entries/arch.conf"
+	mkdir -p /mnt/boot/loader/entries
+	cat << EOF > /mnt/boot/loader/loader.conf
+default arch.conf
+timeout 3
+console-mode max
+editor no
+EOF
+
+	installed_vmlinuz=$(ls /mnt/boot/vmlinuz-* 2>/dev/null | head -n 1)
+	if [ -n "${installed_vmlinuz}" ]; then
+		kfile=$(basename "${installed_vmlinuz}")
+		kname=${kfile#vmlinuz-}
 	else
-		echo "sed -i \"s/PARTUUID=XXXX/PARTUUID=${partuuid}/\" /mnt/boot/loader/entries/arch.conf"
-		echo "sed -i \"s/XXXX/${parttype}/\" /mnt/boot/loader/entries/arch.conf"
-	fi
-	echo "cp /mnt/boot/loader/entries/arch.conf /mnt/boot/loader/entries/arch-fallback.conf"
-	echo "sed -i \"s/Arch Linux/Arch Linux Fallback/\" /mnt/boot/loader/entries/arch-fallback.conf"
-	echo "sed -i \"s/initramfs-linux/initramfs-linux-fallback/\" /mnt/boot/loader/entries/arch-fallback.conf"
-
-	cp /mnt/usr/share/systemd/bootctl/loader.conf /mnt/boot/loader
-	echo "timeout 2" >> /mnt/boot/loader/loader.conf
-	cp /mnt/usr/share/systemd/bootctl/arch.conf /mnt/boot/loader/entries
-
-
-	if [ "${luksroot}" = "1" ]; then
-		sed -i "s/PARTUUID=XXXX/\/dev\/mapper\/root/" /mnt/boot/loader/entries/arch.conf
-		sed -i "s/XXXX/${parttype}/" /mnt/boot/loader/entries/arch.conf
-		sed -i "s/root=/cryptdevice=UUID=${cryptuuid}:root root=/" /mnt/boot/loader/entries/arch.conf
-	else
-		sed -i "s/PARTUUID=XXXX/PARTUUID=${partuuid}/" /mnt/boot/loader/entries/arch.conf
-		sed -i "s/XXXX/${parttype}/" /mnt/boot/loader/entries/arch.conf
+		kfile="vmlinuz-linux"
+		kname="linux"
 	fi
 
-	cp /mnt/boot/loader/entries/arch.conf /mnt/boot/loader/entries/arch-fallback.conf
-	sed -i "s/Arch Linux/Arch Linux Fallback/" /mnt/boot/loader/entries/arch-fallback.conf
-	sed -i "s/initramfs-linux/initramfs-linux-fallback/" /mnt/boot/loader/entries/arch-fallback.conf
+	bootoptions="rw"
+	if [ "${luksroot}" = "1" ]; then
+		cryptuuid=$(blkid -s UUID -o value ${realrootdev} 2>/dev/null)
+		bootoptions="cryptdevice=UUID=${cryptuuid}:root root=/dev/mapper/root ${bootoptions}"
+	else
+		bootoptions="root=PARTUUID=${partuuid} ${bootoptions}"
+	fi
+
+	if [ "${btrfs_root_subvols}" = "1" ]; then
+		bootoptions="${bootoptions} rootflags=subvol=@"
+	fi
+
+	echo "Creating /mnt/boot/loader/entries/arch.conf..."
+	cat << EOF > /mnt/boot/loader/entries/arch.conf
+title   Arch Linux
+linux   /${kfile}
+EOF
+
+	if [ -f "/mnt/boot/intel-ucode.img" ]; then
+		echo "initrd  /intel-ucode.img" >> /mnt/boot/loader/entries/arch.conf
+	elif [ -f "/mnt/boot/amd-ucode.img" ]; then
+		echo "initrd  /amd-ucode.img" >> /mnt/boot/loader/entries/arch.conf
+	fi
+
+	cat << EOF >> /mnt/boot/loader/entries/arch.conf
+initrd  /initramfs-${kname}.img
+options ${bootoptions}
+EOF
+
+	echo "Creating /mnt/boot/loader/entries/arch-fallback.conf..."
+	cat << EOF > /mnt/boot/loader/entries/arch-fallback.conf
+title   Arch Linux (fallback)
+linux   /${kfile}
+EOF
+
+	if [ -f "/mnt/boot/intel-ucode.img" ]; then
+		echo "initrd  /intel-ucode.img" >> /mnt/boot/loader/entries/arch-fallback.conf
+	elif [ -f "/mnt/boot/amd-ucode.img" ]; then
+		echo "initrd  /amd-ucode.img" >> /mnt/boot/loader/entries/arch-fallback.conf
+	fi
+
+	cat << EOF >> /mnt/boot/loader/entries/arch-fallback.conf
+initrd  /initramfs-${kname}-fallback.img
+options ${bootoptions}
+EOF
 
 	pressanykey
 }
@@ -1727,7 +1867,7 @@ archbootloaderrefindmenu(){
 		nextblitem=${1}
 	fi
 	options=()
-	options+=("${txtinstall//%1/refind}" "pacstrap refind-efi")
+	options+=("${txtinstall//%1/refind}" "pacstrap refind")
 	options+=("${txtedit//%1/refind_linux.conf}" "(${txtoptional})")
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtbootloaderrefindmenu}" --cancel-button "${txtback}" --default-item "${nextblitem}" --menu "" 0 0 0 \
 		"${options[@]}" \
@@ -1751,17 +1891,41 @@ archrefindinstall(){
 	clear
 
 	echo "pacstrap /mnt refind"
-	echo "archchroot refindbootloaderinstall ${realrootdev}"
-	echo "echo \"\\\"Arch Linux         \\\" \\\"root=UUID=${rootuuid} rw add_efi_memmap\\\"\" > /mnt/boot/refind_linux.conf"
-	echo "echo \"\\\"Arch Linux Fallback\\\" \\\"root=UUID=${rootuuid} rw add_efi_memmap initrd=/initramfs-linux-fallback.img\\\"\" >> /mnt/boot/refind_linux.conf"
-	echo "echo \"\\\"Arch Linux Terminal\\\" \\\"root=UUID=${rootuuid} rw add_efi_memmap systemd.unit=multi-user.target\\\"\" >> /mnt/boot/refind_linux.conf"
-
-	pacstrap /mnt refind-efi
+	pacstrap /mnt refind
 	archchroot refindbootloaderinstall ${realrootdev}
-	rootuuid=$(blkid -s UUID -o value ${realrootdev})
-	echo "\"Arch Linux         \" \"root=UUID=${rootuuid} rw add_efi_memmap\"" > /mnt/boot/refind_linux.conf
-	echo "\"Arch Linux Fallback\" \"root=UUID=${rootuuid} rw add_efi_memmap initrd=/initramfs-linux-fallback.img\"" >> /mnt/boot/refind_linux.conf
-	echo "\"Arch Linux Terminal\" \"root=UUID=${rootuuid} rw add_efi_memmap systemd.unit=multi-user.target\"" >> /mnt/boot/refind_linux.conf
+
+	rootuuid=$(blkid -s UUID -o value ${realrootdev} 2>/dev/null)
+	installed_vmlinuz=$(ls /mnt/boot/vmlinuz-* 2>/dev/null | head -n 1)
+	if [ -n "${installed_vmlinuz}" ]; then
+		kfile=$(basename "${installed_vmlinuz}")
+		kname=${kfile#vmlinuz-}
+	else
+		kname="linux"
+	fi
+
+	refind_opts="rw add_efi_memmap"
+	if [ "${luksroot}" = "1" ]; then
+		cryptuuid=$(blkid -s UUID -o value ${realrootdev} 2>/dev/null)
+		refind_opts="cryptdevice=UUID=${cryptuuid}:root root=/dev/mapper/root ${refind_opts}"
+	else
+		refind_opts="root=UUID=${rootuuid} ${refind_opts}"
+	fi
+
+	if [ "${btrfs_root_subvols}" = "1" ]; then
+		refind_opts="${refind_opts} rootflags=subvol=@"
+	fi
+
+	ucode_param=""
+	if [ -f "/mnt/boot/intel-ucode.img" ]; then
+		ucode_param="initrd=/intel-ucode.img "
+	elif [ -f "/mnt/boot/amd-ucode.img" ]; then
+		ucode_param="initrd=/amd-ucode.img "
+	fi
+
+	echo "Generating /mnt/boot/refind_linux.conf..."
+	echo "\"Arch Linux\"          \"${refind_opts} ${ucode_param}initrd=/initramfs-${kname}.img\"" > /mnt/boot/refind_linux.conf
+	echo "\"Arch Linux Fallback\" \"${refind_opts} ${ucode_param}initrd=/initramfs-${kname}-fallback.img\"" >> /mnt/boot/refind_linux.conf
+	echo "\"Arch Linux Terminal\" \"${refind_opts} ${ucode_param}initrd=/initramfs-${kname}.img systemd.unit=multi-user.target\"" >> /mnt/boot/refind_linux.conf
 	pressanykey
 }
 archrefindinstallchroot(){
@@ -1779,10 +1943,14 @@ archrefindinstallchroot(){
 archextrasmenu(){
 	pkgs=""
 	options=()
-	options+=("nano" "" on)
-	options+=("vim" "" on)
-	options+=("dhcpcd" "" on)
-	options+=("networkmanager" "" off)
+	options+=("networkmanager" "NetworkManager" on)
+	options+=("iwd" "Wireless daemon (WiFi)" on)
+	options+=("network-manager-applet" "NetworkManager applet" off)
+	options+=("nano" "Terminal editor" on)
+	options+=("vim" "Terminal editor" off)
+	options+=("sudo" "Privilege elevation" on)
+	options+=("git" "Version control" on)
+	options+=("dhcpcd" "Legacy DHCP client" off)
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtextrasmenu}" --checklist "" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
@@ -1839,6 +2007,15 @@ installarchdi(){
 	fi
 }
 archdidownload(){
+	if [ -f "/root/archdi" ]; then
+		cp /root/archdi ./archdi
+		chmod 755 archdi
+		return 0
+	elif [ -f "${scriptdir}/archdi" ]; then
+		cp "${scriptdir}/archdi" ./archdi
+		chmod 755 archdi
+		return 0
+	fi
 	txtselectserver="Select source server :"
 	txtback="Back"
 	options=()
@@ -1853,7 +2030,7 @@ archdidownload(){
 				archdiurl=archdi.sourceforge.net/archdi
 			;;
 			"github.com")
-				archdiurl=matmoul.github.io/archdi >archdi
+				archdiurl=matmoul.github.io/archdi
 			;;
 		esac
 	fi
@@ -2002,6 +2179,16 @@ loadstrings(){
 	txtarchdiinstallandlaunch="Install and run archdi"
 	txtarchdiinstall="Install archdi"
 	txtarchdilaunch="Launch archdi"
+
+	txtbtrfslayout="Btrfs Layout"
+	txtbtrfssubvols="Subvolumes (@, @home, @snapshots, @var_log, @pkg)"
+	txtbtrfssimple="Simple (@root subvolume)"
+	txtbtrfsconfirm="Configure Btrfs layout for %1 :"
+	txtbtrfsmountopts="Btrfs Mount Options"
+	txtbtrfsmountoptsdesc="Select mount options for Btrfs (noatime and commit=120 are enabled by default) :"
+	txtbtrfsoptcompress="ZSTD compression level 1"
+	txtbtrfsoptnodatacow="Disable Copy-on-Write (nodatacow)"
+	txtbtrfsoptnodatasum="Disable checksums (nodatasum)"
 }
 
 # --------------------------------------------------------
@@ -2073,18 +2260,19 @@ if [ "${chroot}" = "1" ]; then
 		'archdilaunch') archdilaunchchroot;;
 	esac
 else
-	echo "Init pacman, please wait..."
-	systemctl start pacman-init.service
-	pacman -Sy --needed arch-install-scripts dialog
-	dmesg |grep efi: > /dev/null
-	if [ "$?" == "1" ]; then
-		if [ "${eficomputer}" != "1" ]; then
-			eficomputer=0
-		fi
-	else
+	echo "Init pacman and keyring, please wait..."
+	optimize_pacman "/etc/pacman.conf"
+	systemctl start pacman-init.service 2>/dev/null
+	pacman -Sy --noconfirm archlinux-keyring 2>/dev/null || true
+	pacman -S --needed --noconfirm arch-install-scripts dialog
+	if [ -d /sys/firmware/efi/efivars ]; then
 		eficomputer=1
 		if [ "${efimode}" == "" ]; then
 			efimode=1
+		fi
+	else
+		if [ "${eficomputer}" != "1" ]; then
+			eficomputer=0
 		fi
 	fi
 	cat << EOF > dialog.archfi
@@ -2103,7 +2291,7 @@ EOF
 	loadstrings
 	EDITOR=nano
 	mainmenu
-	rm dialog.archfi
+	rm -f dialog.archfi
 fi
 
 exit 0

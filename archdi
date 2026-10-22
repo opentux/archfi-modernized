@@ -1,0 +1,666 @@
+#!/bin/bash
+
+# Arch Linux Desktop Install (archdi) - Modernized 2026
+# -----------------------------------------------------
+# License   : GPLv3
+# Reference : https://wiki.archlinux.org/
+
+apptitle="Arch Linux Desktop Install (archdi) - Modernized 2026"
+scriptdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Verify root
+if [ "$(id -u)" != "0" ]; then
+    echo "This script must be run as root. Please run: sudo $0"
+    exit 1
+fi
+
+# Ensure dialog is installed
+if ! command -v dialog >/dev/null 2>&1; then
+    echo "Installing required dependency: dialog..."
+    pacman -Sy --needed --noconfirm dialog
+fi
+
+# --------------------------------------------------------
+# Language Strings
+# --------------------------------------------------------
+load_strings_en(){
+    lang="en"
+    txtmainmenu="Main Menu"
+    txtexit="Exit"
+    txtback="Back"
+    txtok="OK"
+    txtcancel="Cancel"
+    txtcontinue="Continue"
+    txtpressanykey="Press any key to continue..."
+    
+    txtlangmenu="Language"
+    txtpacmanmenu="Pacman Tweaks (Color, ParallelDownloads 10, Multilib)"
+    txtusermenu="User Management"
+    txtgpumenu="Graphics Drivers (GPU)"
+    txtaudiomenu="Audio & Multimedia (PipeWire)"
+    txtdemenu="Desktop Environments"
+    txtfontsmenu="System Fonts"
+    txtservicesmenu="System Services (Bluetooth, CUPS, Trim)"
+    txtappsmenu="Popular Applications"
+    txtaurmenu="AUR Helper (yay / paru)"
+    txtreboot="Reboot System"
+    
+    txtpacmantitle="Pacman Tweaks & Multilib"
+    txtpacmandesc="Enable Color, animated ILoveCandy, ParallelDownloads=10 and Multilib repository ?"
+    txtpacmansuccess="Pacman configuration optimized and Multilib enabled!"
+
+    txtusercreate="Create Standard User (with sudo)"
+    txtusernameprompt="Enter username:"
+    txtuserpwdprompt="Enter password for"
+    txtusersuccess="User %1 successfully created with sudo privileges!"
+    
+    txtgputitle="Graphics Drivers"
+    txtgpudesc="Select your GPU driver (auto-detection shown):"
+    txtgpuamd="AMD Radeon (mesa, vulkan-radeon)"
+    txtgpuintel="Intel Graphics (mesa, vulkan-intel, media-driver)"
+    txtgpunvidiaopen="NVIDIA Modern (nvidia-open, Turing/Ampere/Ada+)"
+    txtgpunvidiadkms="NVIDIA Proprietary (nvidia-dkms, all architectures)"
+    txtgpuvm="Virtual Machine (VirtualBox / VMware / QEMU)"
+    
+    txtaudiotitle="Audio & Multimedia"
+    txtaudiodesc="Install modern PipeWire audio stack ?"
+    
+    txtdetitle="Desktop Environment"
+    txtdedesc="Select Desktop Environment / Window Manager :"
+    txtdeplasma="KDE Plasma 6 (Modern Wayland Desktop)"
+    txtdegnome="GNOME (GNOME 5x / Modern Desktop)"
+    txtdexfce="XFCE 4 (Lightweight Desktop)"
+    txtdecinnamon="Cinnamon Desktop"
+    txtdemate="MATE Desktop"
+    txtdehyprland="Hyprland (Dynamic Tiling Wayland WM)"
+    
+    txtdmtitle="Display Manager for Plasma 6"
+    txtdmdesc="Choose login manager for KDE Plasma :"
+    txtdmplasmalogin="Plasma Login Manager (Recommended for Plasma 6)"
+    txtdmsddm="SDDM (Traditional)"
+    
+    txtfontstitle="System Fonts"
+    txtfontsdesc="Install essential fonts (Noto, DejaVu, CJK, Emoji) ?"
+    
+    txtservicestitle="System Services"
+    txtservicesdesc="Select services to install and enable :"
+    
+    txtappstitle="Popular Applications"
+    txtappsdesc="Select applications to install :"
+    
+    txtaurtitle="AUR Helper"
+    txtaurdesc="Install AUR helper (compiled as non-root) :"
+}
+
+load_strings_fr(){
+    lang="fr"
+    txtmainmenu="Menu Principal"
+    txtexit="Quitter"
+    txtback="Retour"
+    txtok="Valider"
+    txtcancel="Annuler"
+    txtcontinue="Continuer"
+    txtpressanykey="Appuyez sur une touche pour continuer..."
+    
+    txtlangmenu="Langue / Language"
+    txtpacmanmenu="Optimisation Pacman (Couleur, Téléchargements 10, Multilib)"
+    txtusermenu="Gestion des Utilisateurs"
+    txtgpumenu="Pilotes Graphiques (GPU)"
+    txtaudiomenu="Audio & Multimedia (PipeWire)"
+    txtdemenu="Environnements de Bureau"
+    txtfontsmenu="Polices de Caractères"
+    txtservicesmenu="Services Système (Bluetooth, CUPS, Trim)"
+    txtappsmenu="Applications Populaires"
+    txtaurmenu="Gestionnaire AUR (yay / paru)"
+    txtreboot="Redémarrer le Système"
+    
+    txtpacmantitle="Optimisation Pacman & Multilib"
+    txtpacmandesc="Activer la couleur, pacman animé (ILoveCandy), 10 téléchargements parallèles et le dépôt Multilib ?"
+    txtpacmansuccess="Configuration Pacman optimisée et dépôt Multilib activé !"
+
+    txtusercreate="Créer un utilisateur standard (avec sudo)"
+    txtusernameprompt="Nom du nouvel utilisateur :"
+    txtuserpwdprompt="Mot de passe pour"
+    txtusersuccess="L'utilisateur %1 a été créé avec les privilèges sudo !"
+    
+    txtgputitle="Pilotes Graphiques"
+    txtgpudesc="Sélectionnez le pilote de votre carte graphique :"
+    txtgpuamd="AMD Radeon (mesa, vulkan-radeon)"
+    txtgpuintel="Intel Graphics (mesa, vulkan-intel, media-driver)"
+    txtgpunvidiaopen="NVIDIA Moderne (nvidia-open, Turing/Ampere/Ada+)"
+    txtgpunvidiadkms="NVIDIA Propriétaire (nvidia-dkms, toutes cartes)"
+    txtgpuvm="Machine Virtuelle (VirtualBox / VMware / QEMU)"
+    
+    txtaudiotitle="Audio & Multimédia"
+    txtaudiodesc="Installer le stack audio moderne PipeWire ?"
+    
+    txtdetitle="Environnement de Bureau"
+    txtdedesc="Sélectionnez votre environnement graphique :"
+    txtdeplasma="KDE Plasma 6 (Bureau Wayland Moderne)"
+    txtdegnome="GNOME (GNOME 5x / Bureau Moderne)"
+    txtdexfce="XFCE 4 (Bureau Léger et Personnalisable)"
+    txtdecinnamon="Cinnamon (Style traditionnel moderne)"
+    txtdemate="MATE Desktop (Léger et classique)"
+    txtdehyprland="Hyprland (Tiling Wayland dynamique moderne)"
+    
+    txtdmtitle="Gestionnaire de Connexion (Plasma 6)"
+    txtdmdesc="Choisissez le gestionnaire de connexion pour KDE Plasma :"
+    txtdmplasmalogin="Plasma Login Manager (Nouveau et Recommandé)"
+    txtdmsddm="SDDM (Traditionnel)"
+    
+    txtfontstitle="Polices de Caractères"
+    txtfontsdesc="Installer les polices indispensables (Noto, DejaVu, CJK, Emoji) ?"
+    
+    txtservicestitle="Services Système"
+    txtservicesdesc="Sélectionnez les services à installer et activer :"
+    
+    txtappstitle="Applications Populaires"
+    txtappsdesc="Sélectionnez les applications à installer :"
+    
+    txtaurtitle="Gestionnaire AUR"
+    txtaurdesc="Installer un gestionnaire AUR (compilé via utilisateur standard) :"
+}
+
+# Auto-detect language
+if [[ "$LANG" =~ ^fr ]]; then
+    load_strings_fr
+else
+    load_strings_en
+fi
+
+pressanykey(){
+    echo ""
+    read -n1 -r -p "${txtpressanykey}"
+    echo ""
+}
+
+# --------------------------------------------------------
+# Module: Language Selection
+# --------------------------------------------------------
+menu_language(){
+    options=()
+    options+=("English" "English")
+    options+=("French" "Français")
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtlangmenu}" --menu "" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+    if [ "$?" = "0" ]; then
+        if [ "${sel}" = "French" ]; then
+            load_strings_fr
+        else
+            load_strings_en
+        fi
+    fi
+}
+
+# --------------------------------------------------------
+# Module: Pacman Optimization & Multilib
+# --------------------------------------------------------
+optimize_pacman(){
+    local conf="${1:-/etc/pacman.conf}"
+    if [ -f "$conf" ]; then
+        # Enable Color
+        sed -i 's/^#Color/Color/' "$conf"
+        grep -q "^Color" "$conf" || sed -i '/^#Misc options/a Color' "$conf"
+        
+        # Enable ILoveCandy
+        grep -q "ILoveCandy" "$conf" || sed -i '/Color/a ILoveCandy' "$conf"
+        
+        # Enable VerbosePkgLists
+        sed -i 's/^#VerbosePkgLists/VerbosePkgLists/' "$conf"
+        
+        # Set ParallelDownloads = 10
+        if grep -q "ParallelDownloads" "$conf"; then
+            sed -i 's/.*ParallelDownloads.*/ParallelDownloads = 10/' "$conf"
+        else
+            sed -i '/^Color/a ParallelDownloads = 10' "$conf"
+        fi
+        
+        # Enable multilib
+        if grep -q "^#\[multilib\]" "$conf"; then
+            sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$conf"
+        elif ! grep -q "^\[multilib\]" "$conf"; then
+            cat << 'EOF' >> "$conf"
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+EOF
+        fi
+    fi
+}
+
+menu_pacman(){
+    if dialog --backtitle "${apptitle}" --title "${txtpacmantitle}" --yesno "${txtpacmandesc}" 0 0; then
+        clear
+        echo "Optimizing /etc/pacman.conf (Color, ILoveCandy, ParallelDownloads=10, Multilib)..."
+        optimize_pacman "/etc/pacman.conf"
+        echo "Refreshing Pacman database with multilib..."
+        pacman -Sy
+        dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtpacmansuccess}" 0 0
+    fi
+}
+
+# --------------------------------------------------------
+# Module: User Management
+# --------------------------------------------------------
+menu_user(){
+    username=$(dialog --backtitle "${apptitle}" --title "${txtusermenu}" --inputbox "${txtusernameprompt}" 0 0 3>&1 1>&2 2>&3)
+    if [ "$?" = "0" ] && [ -n "${username}" ]; then
+        if id "${username}" &>/dev/null; then
+            dialog --backtitle "${apptitle}" --title "Error" --msgbox "User ${username} already exists!" 0 0
+            return 1
+        fi
+        clear
+        echo "Creating user ${username}..."
+        useradd -m -G wheel -s /bin/bash "${username}"
+        echo "Please set password for ${username}:"
+        passwd "${username}"
+        
+        # Configure sudoers for wheel
+        if [ -f /etc/sudoers ]; then
+            sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+            sed -i 's/^#\s*%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
+        fi
+        
+        dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
+    fi
+}
+
+# --------------------------------------------------------
+# Module: GPU Drivers
+# --------------------------------------------------------
+menu_gpu(){
+    detected_gpu=$(lspci 2>/dev/null | grep -E "VGA|3D|Display")
+    
+    options=()
+    options+=("amd" "${txtgpuamd}")
+    options+=("intel" "${txtgpuintel}")
+    options+=("nvidia-open" "${txtgpunvidiaopen}")
+    options+=("nvidia-dkms" "${txtgpunvidiadkms}")
+    options+=("vm" "${txtgpuvm}")
+    
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtgputitle}" \
+        --menu "${txtgpudesc}\nDetected: ${detected_gpu}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+        
+    if [ "$?" = "0" ]; then
+        clear
+        case ${sel} in
+            "amd")
+                echo "Installing AMD Radeon drivers..."
+                pacman -S --needed --noconfirm mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon
+            ;;
+            "intel")
+                echo "Installing Intel Graphics drivers..."
+                pacman -S --needed --noconfirm mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel
+            ;;
+            "nvidia-open")
+                echo "Installing NVIDIA Open drivers..."
+                pacman -S --needed --noconfirm nvidia-open nvidia-utils lib32-nvidia-utils nvidia-settings
+            ;;
+            "nvidia-dkms")
+                echo "Installing NVIDIA DKMS drivers..."
+                pacman -S --needed --noconfirm nvidia-dkms nvidia-utils lib32-nvidia-utils nvidia-settings
+            ;;
+            "vm")
+                echo "Installing VM guest tools..."
+                pacman -S --needed --noconfirm virtualbox-guest-utils qemu-guest-agent spice-vdagent
+                systemctl enable vboxservice.service 2>/dev/null || true
+                systemctl enable qemu-guest-agent.service 2>/dev/null || true
+            ;;
+        esac
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Module: Audio & Multimedia (PipeWire)
+# --------------------------------------------------------
+menu_audio(){
+    if dialog --backtitle "${apptitle}" --title "${txtaudiotitle}" --yesno "${txtaudiodesc}" 0 0; then
+        clear
+        echo "Installing PipeWire modern audio stack..."
+        pacman -S --needed --noconfirm \
+            pipewire \
+            pipewire-audio \
+            pipewire-pulse \
+            pipewire-alsa \
+            pipewire-jack \
+            wireplumber \
+            pavucontrol \
+            gstreamer \
+            gst-plugins-good \
+            gst-plugins-bad \
+            gst-plugins-ugly \
+            gst-libav \
+            ffmpeg
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Module: Desktop Environments
+# --------------------------------------------------------
+menu_de(){
+    options=()
+    options+=("plasma" "${txtdeplasma}")
+    options+=("gnome" "${txtdegnome}")
+    options+=("xfce" "${txtdexfce}")
+    options+=("cinnamon" "${txtdecinnamon}")
+    options+=("mate" "${txtdemate}")
+    options+=("hyprland" "${txtdehyprland}")
+    
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtdetitle}" --menu "${txtdedesc}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+        
+    if [ "$?" = "0" ]; then
+        clear
+        case ${sel} in
+            "plasma")
+                dm_options=()
+                dm_options+=("plasmalogin" "${txtdmplasmalogin}")
+                dm_options+=("sddm" "${txtdmsddm}")
+                dm_sel=$(dialog --backtitle "${apptitle}" --title "${txtdmtitle}" --menu "${txtdmdesc}" 0 0 0 \
+                    "${dm_options[@]}" \
+                    3>&1 1>&2 2>&3)
+                
+                clear
+                echo "Installing KDE Plasma 6..."
+                pacman -S --needed --noconfirm \
+                    plasma-desktop \
+                    plasma-workspace \
+                    konsole \
+                    dolphin \
+                    ark \
+                    spectacle \
+                    plasma-nm \
+                    plasma-pa \
+                    powerdevil \
+                    kscreen \
+                    breeze \
+                    breeze-gtk
+                
+                if [ "${dm_sel}" = "plasmalogin" ]; then
+                    echo "Installing Plasma Login Manager..."
+                    pacman -S --needed --noconfirm plasma-login-manager
+                    systemctl disable sddm.service 2>/dev/null || true
+                    systemctl enable plasmalogin.service
+                else
+                    echo "Installing SDDM..."
+                    pacman -S --needed --noconfirm sddm
+                    systemctl disable plasmalogin.service 2>/dev/null || true
+                    systemctl enable sddm.service
+                fi
+            ;;
+            "gnome")
+                echo "Installing GNOME..."
+                pacman -S --needed --noconfirm \
+                    gnome-shell \
+                    nautilus \
+                    gnome-terminal \
+                    gnome-control-center \
+                    gnome-tweaks \
+                    gdm
+                systemctl enable gdm.service
+            ;;
+            "xfce")
+                echo "Installing XFCE 4..."
+                pacman -S --needed --noconfirm \
+                    xfce4 \
+                    xfce4-goodies \
+                    lightdm \
+                    lightdm-gtk-greeter \
+                    pavucontrol
+                systemctl enable lightdm.service
+            ;;
+            "cinnamon")
+                echo "Installing Cinnamon..."
+                pacman -S --needed --noconfirm \
+                    cinnamon \
+                    nemo \
+                    gnome-terminal \
+                    lightdm \
+                    lightdm-gtk-greeter
+                systemctl enable lightdm.service
+            ;;
+            "mate")
+                echo "Installing MATE..."
+                pacman -S --needed --noconfirm \
+                    mate \
+                    mate-extra \
+                    lightdm \
+                    lightdm-gtk-greeter
+                systemctl enable lightdm.service
+            ;;
+            "hyprland")
+                echo "Installing Hyprland Wayland..."
+                pacman -S --needed --noconfirm \
+                    hyprland \
+                    waybar \
+                    kitty \
+                    rofi-wayland \
+                    dunst \
+                    xdg-desktop-portal-hyprland \
+                    polkit-kde-agent
+            ;;
+        esac
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Module: System Fonts
+# --------------------------------------------------------
+menu_fonts(){
+    if dialog --backtitle "${apptitle}" --title "${txtfontstitle}" --yesno "${txtfontsdesc}" 0 0; then
+        clear
+        echo "Installing essential font packages..."
+        pacman -S --needed --noconfirm \
+            noto-fonts \
+            noto-fonts-cjk \
+            noto-fonts-emoji \
+            ttf-dejavu \
+            ttf-liberation \
+            fontconfig
+        echo "Updating font cache..."
+        fc-cache -fv
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Module: System Services
+# --------------------------------------------------------
+menu_services(){
+    options=()
+    options+=("bluetooth" "Bluetooth support (bluez)" on)
+    options+=("cups" "Printing support (CUPS)" on)
+    options+=("fstrim" "SSD/NVMe periodic TRIM timer" on)
+    options+=("ufw" "Uncomplicated Firewall" off)
+    
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtservicestitle}" --checklist "${txtservicesdesc}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+        
+    if [ "$?" = "0" ]; then
+        clear
+        for srv in ${sel}; do
+            clean_srv=$(echo ${srv} | sed 's/"//g')
+            case ${clean_srv} in
+                "bluetooth")
+                    echo "Enabling Bluetooth..."
+                    pacman -S --needed --noconfirm bluez bluez-utils
+                    systemctl enable bluetooth.service
+                ;;
+                "cups")
+                    echo "Enabling Printing (CUPS)..."
+                    pacman -S --needed --noconfirm cups cups-pdf
+                    systemctl enable cups.service
+                ;;
+                "fstrim")
+                    echo "Enabling SSD fstrim.timer..."
+                    systemctl enable fstrim.timer
+                ;;
+                "ufw")
+                    echo "Enabling Firewall (ufw)..."
+                    pacman -S --needed --noconfirm ufw
+                    systemctl enable ufw.service
+                    ufw default deny incoming
+                    ufw default allow outgoing
+                ;;
+            esac
+        done
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Module: Popular Applications
+# --------------------------------------------------------
+menu_apps(){
+    options=()
+    options+=("firefox" "Firefox Web Browser" on)
+    options+=("chromium" "Chromium Web Browser" off)
+    options+=("libreoffice-fresh" "LibreOffice Fresh Suite" off)
+    options+=("vlc" "VLC Media Player" on)
+    options+=("mpv" "MPV Video Player" off)
+    options+=("fastfetch" "System Info CLI tool" on)
+    options+=("inxi" "Full-featured CLI system information" on)
+    options+=("btop" "Modern CPU/RAM/Disk Resource Monitor" on)
+    options+=("nvtop" "GPU Process Monitor (AMD/Intel/NVIDIA)" on)
+    options+=("nmon" "Performance Monitoring tool" off)
+    options+=("p7zip" "Archive compression tools" on)
+    options+=("unrar" "RAR archive extraction" on)
+    options+=("kitty" "GPU-accelerated terminal" off)
+    
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtappstitle}" --checklist "${txtappsdesc}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+        
+    if [ "$?" = "0" ]; then
+        clear
+        pkgs=""
+        for itm in ${sel}; do
+            pkgs="${pkgs} $(echo ${itm} | sed 's/"//g')"
+        done
+        if [ -n "${pkgs}" ]; then
+            echo "Installing applications:${pkgs}..."
+            pacman -S --needed --noconfirm ${pkgs}
+            if [[ "${pkgs}" == *"libreoffice-fresh"* ]] && [ "${lang}" = "fr" ]; then
+                pacman -S --needed --noconfirm libreoffice-fresh-fr 2>/dev/null || true
+            fi
+        fi
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Module: AUR Helper
+# --------------------------------------------------------
+menu_aur(){
+    options=()
+    options+=("yay-bin" "yay (Precompiled binary - Fast)")
+    options+=("paru-bin" "paru (Rust-based helper - Precompiled)")
+    
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtaurtitle}" --menu "${txtaurdesc}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+        
+    if [ "$?" = "0" ]; then
+        # Check non-root user
+        regular_users=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd)
+        if [ -z "${regular_users}" ]; then
+            dialog --backtitle "${apptitle}" --title "Error" --msgbox "Please create a standard user first before installing an AUR helper!" 0 0
+            return 1
+        fi
+        
+        target_user=$(echo "${regular_users}" | head -n 1)
+        clear
+        echo "Installing prerequisites (base-devel, git)..."
+        pacman -S --needed --noconfirm base-devel git
+        
+        echo "Building and installing ${sel} as user ${target_user}..."
+        su - "${target_user}" -c "rm -rf /tmp/${sel} && git clone https://aur.archlinux.org/${sel}.git /tmp/${sel} && cd /tmp/${sel} && makepkg -si --noconfirm && rm -rf /tmp/${sel}"
+        
+        pressanykey
+    fi
+}
+
+# --------------------------------------------------------
+# Main Menu
+# --------------------------------------------------------
+mainmenu(){
+    local default_item="."
+    while true; do
+        options=()
+        options+=("1" "${txtlangmenu}")
+        options+=("2" "${txtpacmanmenu}")
+        options+=("3" "${txtusermenu}")
+        options+=("4" "${txtgpumenu}")
+        options+=("5" "${txtaudiomenu}")
+        options+=("6" "${txtdemenu}")
+        options+=("7" "${txtfontsmenu}")
+        options+=("8" "${txtservicesmenu}")
+        options+=("9" "${txtappsmenu}")
+        options+=("10" "${txtaurmenu}")
+        options+=("11" "${txtreboot}")
+        
+        sel=$(dialog --backtitle "${apptitle}" --title "${txtmainmenu}" \
+            --cancel-button "${txtexit}" --default-item "${default_item}" \
+            --menu "" 0 0 0 \
+            "${options[@]}" \
+            3>&1 1>&2 2>&3)
+            
+        if [ "$?" != "0" ]; then
+            clear
+            break
+        fi
+        
+        case ${sel} in
+            "1") menu_language; default_item="2";;
+            "2") menu_pacman; default_item="3";;
+            "3") menu_user; default_item="4";;
+            "4") menu_gpu; default_item="5";;
+            "5") menu_audio; default_item="6";;
+            "6") menu_de; default_item="7";;
+            "7") menu_fonts; default_item="8";;
+            "8") menu_services; default_item="9";;
+            "9") menu_apps; default_item="10";;
+            "10") menu_aur; default_item="11";;
+            "11")
+                if dialog --backtitle "${apptitle}" --title "${txtreboot}" --yesno "${txtreboot} ?" 0 0; then
+                    clear
+                    reboot
+                    break
+                fi
+            ;;
+        esac
+    done
+}
+
+# --------------------------------------------------------
+# Command line arguments / Entry Point
+# --------------------------------------------------------
+case "${1}" in
+    "-i" | "--install")
+        echo "Installing archdi to /usr/local/bin/archdi..."
+        chmod 755 "${0}"
+        cp "${0}" /usr/local/bin/archdi
+        echo "archdi is installed. Type 'archdi' to launch."
+        exit 0
+    ;;
+    "-h" | "--help")
+        echo "Arch Linux Desktop Install (archdi)"
+        echo "Usage: archdi [options]"
+        echo "  -i, --install    Install archdi to /usr/local/bin/archdi"
+        echo "  -h, --help       Show this help"
+        exit 0
+    ;;
+    *)
+        mainmenu
+    ;;
+esac
+
+exit 0
