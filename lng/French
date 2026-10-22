@@ -113,3 +113,13 @@ txtinstallarchdi="Arch Linux Desktop Install (archdi) est un second script qui p
 txtarchdiinstallandlaunch="Installer et exécuter archdi"
 txtarchdiinstall="Installer archdi"
 txtarchdilaunch="Exécuter archdi"
+
+txtbtrfslayout="Disposition Btrfs"
+txtbtrfssubvols="Sous-volumes (@, @home, @snapshots, @var_log, @pkg)"
+txtbtrfssimple="Simple (sous-volume @root)"
+txtbtrfsconfirm="Configurer la disposition Btrfs pour %1 :"
+txtbtrfsmountopts="Options de montage Btrfs"
+txtbtrfsmountoptsdesc="Options de montage pour Btrfs (noatime et commit=120 sont actifs par defaut) :"
+txtbtrfsoptcompress="Compression ZSTD niveau 1"
+txtbtrfsoptnodatacow="Desactiver le Copy-on-Write (nodatacow)"
+txtbtrfsoptnodatasum="Desactiver les sommes de controle (nodatasum)"
