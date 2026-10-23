@@ -46,7 +46,10 @@ Un gros travail d'actualisation a déjà été effectué pour adapter le script 
 
 - **Environnements de bureau modernes** : Prise en charge de **KDE Plasma 6** (avec Wayland et session moderne) et **GNOME** (générations récentes / GNOME 5x).
 - **Dépôts Multilib & Tweaks Pacman** : Menu dédié pour activer d'un clic le dépôt `[multilib]` (essentiel pour le jeu/Steam et la compatibilité 32-bit), avec 10 téléchargements parallèles et `ILoveCandy`.
-- **Pilotes GPU récents** : Intégration du pilote open-source officiel **`nvidia-open`** (architectures Turing, Ampere, Ada Lovelace et plus récentes) aux côtés des pilotes AMD, Intel et NVIDIA propriétaires (avec support DKMS automatisé).
+- **Pilotes GPU récents & Graphiques Hybrides (Optimus / Switch MUX)** :
+  - Profils dédiés pour PC portables hybrides : **Intel + NVIDIA Open** et **AMD + NVIDIA Open**, configurant la stack graphique complète (`intel-media-driver`, `vulkan-intel`, `mesa` 32/64 bits) et l'outil de bascule PRIME (`nvidia-prime` / `prime-run`) pour exploiter le switch MUX ou l'Advanced Optimus.
+  - **Détection dynamique des noyaux pour NVIDIA Open** : si un noyau alternatif est détecté (`linux-zen`, `linux-lts`, `linux-hardened`), le script installe automatiquement **`nvidia-open-dkms`** avec ses en-têtes associés, empêchant `pacman` de forcer l'installation du noyau `linux` standard.
+  - Pilotes AMD Radeon, Intel Graphics et NVIDIA Propriétaire (`nvidia-dkms`) disponibles pour toutes configurations.
 - **Audio moderne** : Intégration de la stack moderne **PipeWire** (avec `pipewire-pulse`, `wireplumber`) en remplacement du vieux PulseAudio.
 - **Boîte à outils système au choix** : Sélection interactive d'outils CLI et utilitaires de surveillance modernes :
   - `nvtop` (monitoring GPU en temps réel pour AMD/Intel/NVIDIA),
