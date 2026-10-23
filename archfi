@@ -1080,6 +1080,13 @@ installbase(){
 	if [ ! -z $numpkg ]; then
 		sed -i "s/.*ParallelDownloads.*/ParallelDownloads = ${numpkg}/" /mnt/etc/pacman.conf	
 	fi	
+	if [[ "$locale" =~ ^fr ]] || [[ "$LANG" =~ ^fr ]]; then
+		echo "Initializing French keyboard layout (vconsole, X11, Wayland)..."
+		mkdir -p /mnt/etc
+		echo "KEYMAP=fr" > /mnt/etc/vconsole.conf
+		echo "FONT=lat1-16" >> /mnt/etc/vconsole.conf
+		archapplykeyboardconfig "fr"
+	fi
 	pressanykey
 }
 
@@ -1265,12 +1272,72 @@ archsethostname(){
 	fi
 }
 
+archapplykeyboardconfig(){
+	local k="${1:-fr}"
+	local x11_layout="us"
+	if [[ "${k}" =~ ^fr ]]; then
+		x11_layout="fr"
+	elif [[ "${k}" =~ ^be ]]; then
+		x11_layout="be"
+	elif [[ "${k}" =~ ^ca ]]; then
+		x11_layout="ca"
+	elif [[ "${k}" =~ ^ch ]]; then
+		x11_layout="ch"
+	elif [[ "${k}" =~ ^de ]]; then
+		x11_layout="de"
+	elif [[ "${k}" =~ ^es ]]; then
+		x11_layout="es"
+	elif [[ "${k}" =~ ^it ]]; then
+		x11_layout="it"
+	elif [[ "${k}" =~ ^uk ]] || [[ "${k}" =~ ^gb ]]; then
+		x11_layout="gb"
+	fi
+
+	mkdir -p /mnt/etc/X11/xorg.conf.d /mnt/etc/xdg /mnt/etc/skel/.config
+	cat << EOF > /mnt/etc/X11/xorg.conf.d/00-keyboard.conf
+# Written by archfi
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "${x11_layout}"
+        Option "XkbModel" "pc105"
+EndSection
+EOF
+
+	cat << EOF > /mnt/etc/xdg/kxkbrc
+[Layout]
+DisplayNames=
+IncludeLabel=true
+LayoutList=${x11_layout}
+LayoutLoopCount=1
+Model=pc105
+ResetOldOptions=false
+ShowFlag=false
+ShowLabel=true
+ShowLayoutIndicator=true
+ShowSingle=false
+SwitchMode=Global
+Use=true
+VariantList=
+EOF
+	cp /mnt/etc/xdg/kxkbrc /mnt/etc/skel/.config/kxkbrc 2>/dev/null || true
+
+	# GNOME & GDM Wayland (dconf system-wide override)
+	mkdir -p /mnt/etc/dconf/profile /mnt/etc/dconf/db/local.d
+	if [ ! -f /mnt/etc/dconf/profile/user ]; then
+		cat << 'EOF' > /mnt/etc/dconf/profile/user
+user-db:user
+system-db:local
+EOF
+	fi
+	cat << EOF > /mnt/etc/dconf/db/local.d/00-keyboard
+[org/gnome/desktop/input-sources]
+sources=[('xkb', '${x11_layout}')]
+mru-sources=[('xkb', '${x11_layout}')]
+EOF
+}
+
 archsetkeymap(){
-	#items=$(localectl list-keymaps)
-	#options=()
-	#for item in ${items}; do
-	#  options+=("${item}" "")
-	#done
 	items=$(find /usr/share/kbd/keymaps/ -type f -printf "%f\n" | sort -V)
 	options=()
 	defsel=""
@@ -1287,6 +1354,8 @@ archsetkeymap(){
 		clear
 		echo "echo \"KEYMAP=${keymap}\" > /mnt/etc/vconsole.conf"
 		echo "KEYMAP=${keymap}" > /mnt/etc/vconsole.conf
+		echo "Configuring graphical keyboard layout (${keymap})..."
+		archapplykeyboardconfig "${keymap}"
 		pressanykey
 	fi
 }
@@ -1476,6 +1545,15 @@ archsetuser(){
 		echo "Configured /etc/sudoers.d/${username} (NOPASSWD: ALL)"
 	fi
 
+<<<<<<< HEAD
+=======
+	if [ -f /mnt/etc/xdg/kxkbrc ]; then
+		mkdir -p "/mnt/home/${username}/.config"
+		cp /mnt/etc/xdg/kxkbrc "/mnt/home/${username}/.config/kxkbrc"
+		arch-chroot /mnt chown -R "${username}:wheel" "/home/${username}/.config" 2>/dev/null || true
+	fi
+
+>>>>>>> 1a6be0a (correction/gestion locale clavier wayland)
 	pressanykey
 	dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
 }

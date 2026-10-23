@@ -30,10 +30,17 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 - **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
 - **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap.
 - **Création d'utilisateur & Sudoers propre** : Menu dédié à la création d'un compte utilisateur standard directement depuis `archfi`, avec ajout au groupe `wheel` et option pour créer un fichier nominatif sans mot de passe (`NOPASSWD`) dans `/etc/sudoers.d/<nomduuser>` (droits 0440).
+<<<<<<< HEAD
+=======
+- **Disposition clavier universelle (Console, X11, Wayland)** : Configuration automatique de la disposition clavier (AZERTY `fr`) pour la console (`vconsole.conf`), les sessions graphiques (`/etc/X11/xorg.conf.d/00-keyboard.conf`) et KDE Plasma (`/etc/xdg/kxkbrc`).
+>>>>>>> 1a6be0a (correction/gestion locale clavier wayland)
 - **Traductions épurées** : Maintenance ciblée uniquement sur le Français et l'Anglais (suppression des fichiers de langues orphelins).
 
 ### 2. `archdi` (Post-installation & Environnement de bureau)
 Un gros travail d'actualisation a déjà été effectué pour adapter le script aux standards actuels :
+- **Clavier AZERTY natif dans les Display Managers & Bureaux** :
+  - Détection automatique et configuration globale du clavier pour tous les gestionnaires de session (SDDM, GDM, LightDM, Plasma Login Manager) évitant de se retrouver en QWERTY à l'écran de connexion.
+  - Configuration native de **KDE Plasma 6** (`kxkbrc` système et utilisateur), GNOME, XFCE, Cinnamon, MATE et Hyprland pour un clavier français fonctionnel dès le premier démarrage.
 - **Listing des paquets dépoussiéré** : Nettoyage en profondeur des paquets abandonnés ou renommés dans les dépôts officiels.
 - **Gestionnaire AUR `yay` & Déploiement sans blocage** :
   - Déploiement direct de **`yay`** (`yay-bin`) sans sous-menu superflu.

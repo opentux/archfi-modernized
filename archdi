@@ -307,10 +307,105 @@ menu_user(){
             echo "${username} ALL=(ALL:ALL) NOPASSWD: ALL" > "/etc/sudoers.d/${username}"
             chmod 0440 "/etc/sudoers.d/${username}"
             echo "Configured /etc/sudoers.d/${username} with NOPASSWD: ALL"
+<<<<<<< HEAD
+=======
+        fi
+
+        if [ -f /etc/xdg/kxkbrc ]; then
+            mkdir -p "/home/${username}/.config"
+            cp /etc/xdg/kxkbrc "/home/${username}/.config/kxkbrc"
+            chown -R "${username}" "/home/${username}/.config" 2>/dev/null || true
+>>>>>>> 1a6be0a (correction/gestion locale clavier wayland)
         fi
         
         dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
     fi
+}
+
+# --------------------------------------------------------
+# Helpers: Keyboard Layout Configuration
+# --------------------------------------------------------
+configure_system_keymap(){
+    local kbd_layout="us"
+    if [ -f /etc/vconsole.conf ] && grep -qi "KEYMAP=.*fr" /etc/vconsole.conf; then
+        kbd_layout="fr"
+    elif [[ "$LANG" =~ ^fr ]] || [ "${lang}" = "fr" ]; then
+        kbd_layout="fr"
+    fi
+
+    echo "Configuring graphical and session keyboard layout (${kbd_layout})..."
+
+    # 1. System-wide X11 & Display Managers (SDDM, GDM, LightDM)
+    mkdir -p /etc/X11/xorg.conf.d
+    cat << EOF > /etc/X11/xorg.conf.d/00-keyboard.conf
+# Written by archdi
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "${kbd_layout}"
+        Option "XkbModel" "pc105"
+EndSection
+EOF
+
+    # 2. Systemd localectl (applies to systemd-localed & Wayland compositors)
+    localectl set-x11-keymap "${kbd_layout}" pc105 2>/dev/null || true
+    if [ "${kbd_layout}" = "fr" ]; then
+        localectl set-keymap fr 2>/dev/null || true
+    fi
+
+    # 3. KDE Plasma 6 (system-wide kxkbrc & user configs for Wayland and X11)
+    mkdir -p /etc/xdg
+    cat << EOF > /etc/xdg/kxkbrc
+[Layout]
+DisplayNames=
+IncludeLabel=true
+LayoutList=${kbd_layout}
+LayoutLoopCount=1
+Model=pc105
+ResetOldOptions=false
+ShowFlag=false
+ShowLabel=true
+ShowLayoutIndicator=true
+ShowSingle=false
+SwitchMode=Global
+Use=true
+VariantList=
+EOF
+
+    mkdir -p /etc/skel/.config
+    cp /etc/xdg/kxkbrc /etc/skel/.config/kxkbrc 2>/dev/null || true
+
+    for u_home in /home/*; do
+        if [ -d "${u_home}" ]; then
+            local u_name
+            u_name=$(basename "${u_home}")
+            mkdir -p "${u_home}/.config"
+            cp /etc/xdg/kxkbrc "${u_home}/.config/kxkbrc"
+            chown -R "${u_name}" "${u_home}/.config" 2>/dev/null || true
+        fi
+    done
+
+    # 4. SDDM Xsetup script (for SDDM X11 greeter)
+    if [ -d /usr/share/sddm/scripts ]; then
+        if [ -f /usr/share/sddm/scripts/Xsetup ]; then
+            grep -q "setxkbmap" /usr/share/sddm/scripts/Xsetup || echo "setxkbmap ${kbd_layout} 2>/dev/null || true" >> /usr/share/sddm/scripts/Xsetup
+        fi
+    fi
+
+    # 5. GNOME & GDM Wayland (dconf system-wide override for Mutter & GDM)
+    mkdir -p /etc/dconf/profile /etc/dconf/db/local.d
+    if [ ! -f /etc/dconf/profile/user ]; then
+        cat << 'EOF' > /etc/dconf/profile/user
+user-db:user
+system-db:local
+EOF
+    fi
+    cat << EOF > /etc/dconf/db/local.d/00-keyboard
+[org/gnome/desktop/input-sources]
+sources=[('xkb', '${kbd_layout}')]
+mru-sources=[('xkb', '${kbd_layout}')]
+EOF
+    dconf update 2>/dev/null || true
 }
 
 # --------------------------------------------------------
@@ -614,6 +709,7 @@ menu_de(){
                     polkit-kde-agent
             ;;
         esac
+        configure_system_keymap
         pressanykey
     fi
 }
