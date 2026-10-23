@@ -30,7 +30,7 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 - **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
 - **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap.
 - **Création d'utilisateur & Sudoers propre** : Menu dédié à la création d'un compte utilisateur standard directement depuis `archfi`, avec ajout au groupe `wheel` et option pour créer un fichier nominatif sans mot de passe (`NOPASSWD`) dans `/etc/sudoers.d/<nomduuser>` (droits 0440).
-=======
+
 - **Disposition clavier universelle (Console, X11, Wayland)** : Configuration automatique de la disposition clavier (AZERTY `fr`) pour la console (`vconsole.conf`), les sessions graphiques (`/etc/X11/xorg.conf.d/00-keyboard.conf`) et KDE Plasma (`/etc/xdg/kxkbrc`).
  
 - **Traductions épurées** : Maintenance ciblée uniquement sur le Français et l'Anglais (suppression des fichiers de langues orphelins).
