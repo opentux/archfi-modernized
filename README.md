@@ -29,13 +29,18 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 - **Options Btrfs optimisées** : Montage par défaut moderne (`rw,noatime,commit=120,space_cache=v2,compress=zstd:1`) et support revu des sous-volumes (`@`, `@home`, `@snapshots`, etc.).
 - **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
 - **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap.
+- **Création d'utilisateur & Sudoers propre** : Menu dédié à la création d'un compte utilisateur standard directement depuis `archfi`, avec ajout au groupe `wheel` et option pour créer un fichier nominatif sans mot de passe (`NOPASSWD`) dans `/etc/sudoers.d/<nomduuser>` (droits 0440).
 - **Traductions épurées** : Maintenance ciblée uniquement sur le Français et l'Anglais (suppression des fichiers de langues orphelins).
 
 ### 2. `archdi` (Post-installation & Environnement de bureau)
 Un gros travail d'actualisation a déjà été effectué pour adapter le script aux standards actuels :
 - **Listing des paquets dépoussiéré** : Nettoyage en profondeur des paquets abandonnés ou renommés dans les dépôts officiels.
+- **Gestionnaire AUR `yay` & Déploiement sans blocage** :
+  - Déploiement direct de **`yay`** (`yay-bin`) sans sous-menu superflu.
+  - Résolution des blocages de mot de passe sudo lors de la compilation AUR en chroot (gestion `NOPASSWD` nominative ou temporaire).
+  - Déploiement automatique de `yay` en amont si des paquets AUR (comme TUXEDO) sont sélectionnés.
 - **Support PC Portables TUXEDO & Gestion d'énergie** :
-  - Intégration du pack complet TUXEDO : `tuxedo-drivers-dkms` et `tuxedo-control-center-bin` (AUR).
+  - Intégration du pack complet TUXEDO : `tuxedo-drivers-dkms` et `tuxedo-control-center-bin` (AUR via `yay`).
   - Détection automatique du/des noyau(x) installé(s) et installation transparente des headers et de `dkms`.
   - Résolution des conflits d'énergie : arrêt et masquage automatique (`systemctl mask`) des services concurrents (`power-profiles-daemon`, `tuned`, `tuned-ppd`, `tlp`, `auto-cpufreq`) pour confier la gestion exclusive à `tccd.service` (TUXEDO Control Center), avec option de restauration.
 

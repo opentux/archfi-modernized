@@ -43,7 +43,7 @@ load_strings_en(){
     txtservicesmenu="System Services (Bluetooth, CUPS, Trim)"
     txttuxedomenu="TUXEDO Laptop (Drivers DKMS, TCC & Power Mgmt)"
     txtappsmenu="Popular Applications"
-    txtaurmenu="AUR Helper (yay / paru)"
+    txtaurmenu="AUR Helper (yay)"
     txtreboot="Reboot System"
     
     txtpacmantitle="Pacman Tweaks & Multilib"
@@ -89,8 +89,9 @@ load_strings_en(){
     txtappstitle="Popular Applications"
     txtappsdesc="Select applications to install :"
     
-    txtaurtitle="AUR Helper"
-    txtaurdesc="Install AUR helper (compiled as non-root) :"
+    txtaurtitle="AUR Helper (yay)"
+    txtaurdesc="Install AUR helper (yay-bin) ?"
+    txtusersudoersnopasswd="Enable passwordless sudo (NOPASSWD) in /etc/sudoers.d/%1 ?\n\n(Recommended: Yes for seamless AUR / yay package installations)"
 
     txttuxedotitle="TUXEDO Laptop Support"
     txttuxedodesc="Select TUXEDO configuration option:"
@@ -124,7 +125,7 @@ load_strings_fr(){
     txtservicesmenu="Services Système (Bluetooth, CUPS, Trim)"
     txttuxedomenu="PC Portables TUXEDO (Pilotes DKMS, TCC & Énergie)"
     txtappsmenu="Applications Populaires"
-    txtaurmenu="Gestionnaire AUR (yay / paru)"
+    txtaurmenu="Gestionnaire AUR (yay)"
     txtreboot="Redémarrer le Système"
     
     txtpacmantitle="Optimisation Pacman & Multilib"
@@ -170,8 +171,9 @@ load_strings_fr(){
     txtappstitle="Applications Populaires"
     txtappsdesc="Sélectionnez les applications à installer :"
     
-    txtaurtitle="Gestionnaire AUR"
-    txtaurdesc="Installer un gestionnaire AUR (compilé via utilisateur standard) :"
+    txtaurtitle="Gestionnaire AUR (yay)"
+    txtaurdesc="Installer le gestionnaire AUR (yay-bin) ?"
+    txtusersudoersnopasswd="Activer sudo sans mot de passe (NOPASSWD) dans /etc/sudoers.d/%1 ?\n\n(Recommandé : Oui pour une installation fluide de yay et des paquets AUR)"
 
     txttuxedotitle="Support Matériel TUXEDO"
     txttuxedodesc="Sélectionnez l'option de configuration TUXEDO :"
@@ -274,7 +276,15 @@ menu_user(){
             dialog --backtitle "${apptitle}" --title "Error" --msgbox "User ${username} already exists!" 0 0
             return 1
         fi
+
+        local nopasswd="0"
+        if (dialog --backtitle "${apptitle}" --title "${txtusermenu}" --yesno "${txtusersudoersnopasswd//%1/${username}}" 0 0); then
+            nopasswd="1"
+        fi
+
         clear
+        echo "Installing sudo..."
+        pacman -S --needed --noconfirm sudo
         echo "Creating user ${username}..."
         useradd -m -G wheel -s /bin/bash "${username}"
         echo "Please set password for ${username}:"
@@ -284,6 +294,15 @@ menu_user(){
         if [ -f /etc/sudoers ]; then
             sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
             sed -i 's/^#\s*%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
+            sed -i 's/^#\s*#includedir \/etc\/sudoers.d/#includedir \/etc\/sudoers.d/' /etc/sudoers
+            grep -q "^#includedir /etc/sudoers.d" /etc/sudoers || echo "#includedir /etc/sudoers.d" >> /etc/sudoers
+        fi
+
+        if [ "${nopasswd}" = "1" ]; then
+            mkdir -p /etc/sudoers.d
+            echo "${username} ALL=(ALL:ALL) NOPASSWD: ALL" > "/etc/sudoers.d/${username}"
+            chmod 0440 "/etc/sudoers.d/${username}"
+            echo "Configured /etc/sudoers.d/${username} with NOPASSWD: ALL"
         fi
         
         dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
@@ -316,26 +335,71 @@ install_kernel_headers_and_dkms(){
     pacman -S --needed --noconfirm ${headers_pkgs}
 }
 
+install_yay(){
+    local user="${1}"
+    if command -v yay &>/dev/null; then
+        echo "yay is already installed."
+        return 0
+    fi
+
+    echo "Ensuring build prerequisites (base-devel, git, sudo)..."
+    pacman -S --needed --noconfirm base-devel git sudo
+
+    chmod 1777 /tmp
+
+    local sudoers_temp="/etc/sudoers.d/99-installer-temp"
+    local had_temp_sudoers=0
+    if [ ! -f "/etc/sudoers.d/${user}" ]; then
+        mkdir -p /etc/sudoers.d
+        echo "${user} ALL=(ALL:ALL) NOPASSWD: ALL" > "${sudoers_temp}"
+        chmod 0440 "${sudoers_temp}"
+        had_temp_sudoers=1
+    fi
+
+    echo "Building and installing yay-bin as user ${user}..."
+    su - "${user}" -c "rm -rf /tmp/yay-bin && git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin && cd /tmp/yay-bin && makepkg -si --noconfirm && rm -rf /tmp/yay-bin"
+    local res=$?
+
+    if [ "${had_temp_sudoers}" = "1" ]; then
+        rm -f "${sudoers_temp}"
+    fi
+
+    if [ ${res} -eq 0 ]; then
+        echo "yay installed successfully!"
+    else
+        echo "Error: Failed to install yay."
+    fi
+    return ${res}
+}
+
 install_aur_pkgs(){
     local user="${1}"
     shift
     local pkgs="$@"
 
-    echo "Ensuring build prerequisites (base-devel, git)..."
-    pacman -S --needed --noconfirm base-devel git
-
-    if command -v yay &>/dev/null; then
-        echo "Installing ${pkgs} using yay..."
-        su - "${user}" -c "yay -S --needed --noconfirm ${pkgs}"
-    elif command -v paru &>/dev/null; then
-        echo "Installing ${pkgs} using paru..."
-        su - "${user}" -c "paru -S --needed --noconfirm ${pkgs}"
-    else
-        for pkg in ${pkgs}; do
-            echo "Building and installing ${pkg} from AUR using makepkg (user: ${user})..."
-            su - "${user}" -c "rm -rf /tmp/${pkg} && git clone https://aur.archlinux.org/${pkg}.git /tmp/${pkg} && cd /tmp/${pkg} && makepkg -si --noconfirm && rm -rf /tmp/${pkg}"
-        done
+    if ! command -v yay &>/dev/null; then
+        echo "yay is required for AUR packages. Installing yay-bin first..."
+        install_yay "${user}" || return 1
     fi
+
+    local sudoers_temp="/etc/sudoers.d/99-installer-temp"
+    local had_temp_sudoers=0
+    if [ ! -f "/etc/sudoers.d/${user}" ]; then
+        mkdir -p /etc/sudoers.d
+        echo "${user} ALL=(ALL:ALL) NOPASSWD: ALL" > "${sudoers_temp}"
+        chmod 0440 "${sudoers_temp}"
+        had_temp_sudoers=1
+    fi
+
+    echo "Installing ${pkgs} from AUR using yay (user: ${user})..."
+    su - "${user}" -c "yay -S --needed --noconfirm ${pkgs}"
+    local res=$?
+
+    if [ "${had_temp_sudoers}" = "1" ]; then
+        rm -f "${sudoers_temp}"
+    fi
+
+    return ${res}
 }
 
 # --------------------------------------------------------
@@ -731,23 +795,10 @@ menu_apps(){
 # Module: AUR Helper
 # --------------------------------------------------------
 menu_aur(){
-    options=()
-    options+=("yay-bin" "yay (Precompiled binary - Fast)")
-    options+=("paru-bin" "paru (Rust-based helper - Precompiled)")
-    
-    sel=$(dialog --backtitle "${apptitle}" --title "${txtaurtitle}" --menu "${txtaurdesc}" 0 0 0 \
-        "${options[@]}" \
-        3>&1 1>&2 2>&3)
-        
-    if [ "$?" = "0" ]; then
-        check_regular_user || return 1
+    check_regular_user || return 1
+    if dialog --backtitle "${apptitle}" --title "${txtaurtitle}" --yesno "${txtaurdesc}" 0 0; then
         clear
-        echo "Installing prerequisites (base-devel, git)..."
-        pacman -S --needed --noconfirm base-devel git
-        
-        echo "Building and installing ${sel} as user ${target_user}..."
-        su - "${target_user}" -c "rm -rf /tmp/${sel} && git clone https://aur.archlinux.org/${sel}.git /tmp/${sel} && cd /tmp/${sel} && makepkg -si --noconfirm && rm -rf /tmp/${sel}"
-        
+        install_yay "${target_user}"
         pressanykey
     fi
 }

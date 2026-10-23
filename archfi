@@ -1111,6 +1111,7 @@ archmenu(){
 	options+=("${txtsetlocale}" "/etc/locale.conf, /etc/locale.gen")
 	options+=("${txtsettime}" "/etc/localtime")
 	options+=("${txtsetrootpassword}" "")
+	options+=("${txtsetuser}" "(useradd & sudoers)")
 	options+=("${txtgenerate//%1/fstab}" "")
 	if [ "${luksdrive}" = "1" ]; then
 		options+=("${txtgenerate//%1/crypttab}" "")
@@ -1155,6 +1156,10 @@ archmenu(){
 			;;
 			"${txtsetrootpassword}")
 				archsetrootpassword
+				nextitem="${txtsetuser}"
+			;;
+			"${txtsetuser}")
+				archsetuser
 				nextitem="${txtgenerate//%1/fstab}"
 			;;
 			"${txtgenerate//%1/fstab}")
@@ -1423,6 +1428,56 @@ archsetrootpasswordchroot(){
 		passed=$?
 	done
 	exit
+}
+
+archsetuser(){
+	local username
+	username=$(dialog --backtitle "${apptitle}" --title "${txtsetuser}" --inputbox "${txtusernameprompt}" 0 0 "" 3>&1 1>&2 2>&3)
+	if [ "$?" != "0" ] || [ -z "${username}" ]; then
+		return 1
+	fi
+
+	if arch-chroot /mnt id "${username}" &>/dev/null; then
+		dialog --backtitle "${apptitle}" --title "Error" --msgbox "User ${username} already exists!" 0 0
+		return 1
+	fi
+
+	local nopasswd="0"
+	if (dialog --backtitle "${apptitle}" --title "${txtsetuser}" --yesno "${txtusersudoersnopasswd//%1/${username}}" 0 0); then
+		nopasswd="1"
+	fi
+
+	clear
+	echo "Installing sudo inside target system..."
+	arch-chroot /mnt pacman -S --needed --noconfirm sudo
+
+	echo "Creating user ${username}..."
+	arch-chroot /mnt useradd -m -G wheel -s /bin/bash "${username}"
+
+	echo "Setting password for user ${username}:"
+	local passed=1
+	while [[ ${passed} != 0 ]]; do
+		arch-chroot /mnt passwd "${username}"
+		passed=$?
+	done
+
+	# Configure sudoers
+	if [ -f /mnt/etc/sudoers ]; then
+		sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
+		sed -i 's/^#\s*%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /mnt/etc/sudoers
+		sed -i 's/^#\s*#includedir \/etc\/sudoers.d/#includedir \/etc\/sudoers.d/' /mnt/etc/sudoers
+		grep -q "^#includedir /etc/sudoers.d" /mnt/etc/sudoers || echo "#includedir /etc/sudoers.d" >> /mnt/etc/sudoers
+	fi
+
+	if [ "${nopasswd}" = "1" ]; then
+		mkdir -p /mnt/etc/sudoers.d
+		echo "${username} ALL=(ALL:ALL) NOPASSWD: ALL" > "/mnt/etc/sudoers.d/${username}"
+		chmod 0440 "/mnt/etc/sudoers.d/${username}"
+		echo "Configured /etc/sudoers.d/${username} (NOPASSWD: ALL)"
+	fi
+
+	pressanykey
+	dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
 }
 
 archgenfstabmenu(){
@@ -2189,6 +2244,10 @@ loadstrings(){
 	txtsetlocale="Set Locale"
 	txtsettime="Set Time"
 	txtsetrootpassword="Set root password"
+	txtsetuser="Create Standard User"
+	txtusernameprompt="Enter username:"
+	txtusersuccess="User %1 successfully created with sudo privileges!"
+	txtusersudoersnopasswd="Enable passwordless sudo (NOPASSWD) in /etc/sudoers.d/%1 ?\n\n(Recommended: Yes for seamless AUR / yay package installations)"
 
 	txthwclock="Hardware clock :"
 	txthwclockutc="UTC"
