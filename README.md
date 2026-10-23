@@ -22,6 +22,10 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 ### 1. `archfi` (Installation du système de base)
 - **Monorepo & Détection locale** : `archdi` est rapatrié dans le même dossier et détecté automatiquement via `scriptdir`.
 - **Prise en charge du matériel moderne** : Détection et nommage correct des partitions NVMe, eMMC et périphériques loop (`nvme0n1pX`).
+- **Partitionnement moderne & Swap en RAM (zram)** :
+  - Partition EFI / boot dimensionnée à **2 Go** par défaut (indispensable aujourd'hui pour accueillir plusieurs noyaux, initramfs de secours et UKIs).
+  - Question interactive demandant si l'utilisateur souhaite créer ou non une partition swap sur le disque (afin de privilégier zram / swap en RAM). En l'absence de swap, la partition racine (`/`) occupe l'intégralité restante du disque.
+- **Menu de formatage clarifié** : Séparation stricte entre le formatage de la partition BOOT/EFI (obligatoirement en FAT32 sous UEFI) et de la partition ROOT (accès direct à Btrfs, Ext4, XFS, F2FS avec descriptions claires), avec arrêt propre en cas d'annulation.
 - **Options Btrfs optimisées** : Montage par défaut moderne (`rw,noatime,commit=120,space_cache=v2,compress=zstd:1`) et support revu des sous-volumes (`@`, `@home`, `@snapshots`, etc.).
 - **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
 - **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap.

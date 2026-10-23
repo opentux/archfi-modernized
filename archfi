@@ -294,26 +294,38 @@ diskpartautodos(){
 		device=$(selectdisk "${txtautoparts} (dos)")
 	if [ "$?" = "0" ]; then
 		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (dos)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			want_swap="0"
+			if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (dos)" --defaultno --yesno "${txtcreateswap}" 0 0); then
+				want_swap="1"
+			fi
 			clear
 			echo "${txtautopartclear}"
 			parted ${device} mklabel msdos
 			sleep 1
-			echo "${txtautopartcreate//%1/boot}"
-			echo -e "n\np\n\n\n+512M\na\nw" | fdisk ${device}
+			echo "${txtautopartcreate//%1/boot (1GB)}"
+			echo -e "n\np\n1\n\n+1024M\na\nw" | fdisk ${device}
 			sleep 1
-			echo "${txtautopartcreate//%1/swap}"
-			swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
-			swapsize=$((${swapsize}/1000))"M"
-			echo -e "n\np\n\n\n+${swapsize}\nt\n\n82\nw" | fdisk ${device}
-			sleep 1
-			echo "${txtautopartcreate//%1/root}"
-			echo -e "n\np\n\n\n\nw" | fdisk ${device}
+			if [ "${want_swap}" = "1" ]; then
+				echo "${txtautopartcreate//%1/swap}"
+				swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
+				swapsize=$((${swapsize}/1000))"M"
+				echo -e "n\np\n2\n\n+${swapsize}\nt\n2\n82\nw" | fdisk ${device}
+				sleep 1
+				echo "${txtautopartcreate//%1/root}"
+				echo -e "n\np\n3\n\n\nw" | fdisk ${device}
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=$(get_partition_name "${device}" 2)
+				rootdev=$(get_partition_name "${device}" 3)
+			else
+				echo "${txtautopartcreate//%1/root}"
+				echo -e "n\np\n2\n\n\nw" | fdisk ${device}
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=""
+				rootdev=$(get_partition_name "${device}" 2)
+			fi
 			sleep 1
 			echo ""
 			pressanykey
-			bootdev=$(get_partition_name "${device}" 1)
-			swapdev=$(get_partition_name "${device}" 2)
-			rootdev=$(get_partition_name "${device}" 3)
 			efimode="0"
 		fi
 	fi
@@ -323,24 +335,36 @@ diskpartautogpt(){
 		device=$(selectdisk "${txtautoparts} (gpt)")
 	if [ "$?" = "0" ]; then
 		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			want_swap="0"
+			if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt)" --defaultno --yesno "${txtcreateswap}" 0 0); then
+				want_swap="1"
+			fi
 			clear
 			echo "${txtautopartclear}"
 			parted ${device} mklabel gpt
 			echo "${txtautopartcreate//%1/BIOS boot}"
 			sgdisk ${device} -n=1:0:+31M -t=1:ef02 -c=0:mbrboot
-			echo "${txtautopartcreate//%1/boot}"
-			sgdisk ${device} -n=2:0:+512M -c=0:boot
-			echo "${txtautopartcreate//%1/swap}"
-			swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
-			swapsize=$((${swapsize}/1000))"M"
-			sgdisk ${device} -n=3:0:+${swapsize} -t=3:8200 -c=0:swap
-			echo "${txtautopartcreate//%1/root}"
-			sgdisk ${device} -n=4:0:0 -c=0:root
+			echo "${txtautopartcreate//%1/boot (2GB)}"
+			sgdisk ${device} -n=2:0:+2048M -c=0:boot
+			if [ "${want_swap}" = "1" ]; then
+				echo "${txtautopartcreate//%1/swap}"
+				swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
+				swapsize=$((${swapsize}/1000))"M"
+				sgdisk ${device} -n=3:0:+${swapsize} -t=3:8200 -c=0:swap
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=4:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 2)
+				swapdev=$(get_partition_name "${device}" 3)
+				rootdev=$(get_partition_name "${device}" 4)
+			else
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=3:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 2)
+				swapdev=""
+				rootdev=$(get_partition_name "${device}" 3)
+			fi
 			echo ""
 			pressanykey
-			bootdev=$(get_partition_name "${device}" 2)
-			swapdev=$(get_partition_name "${device}" 3)
-			rootdev=$(get_partition_name "${device}" 4)
 			efimode="0"
 		fi
 	fi
@@ -350,22 +374,34 @@ diskpartautoefi(){
 		device=$(selectdisk "${txtautoparts} (gpt,efi)")
 	if [ "$?" = "0" ]; then
 		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt,efi)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			want_swap="0"
+			if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt,efi)" --defaultno --yesno "${txtcreateswap}" 0 0); then
+				want_swap="1"
+			fi
 			clear
 			echo "${txtautopartclear}"
 			parted ${device} mklabel gpt
-			echo "${txtautopartcreate//%1/EFI boot}"
-			sgdisk ${device} -n=1:0:+1024M -t=1:ef00 -c=0:boot
-			echo "${txtautopartcreate//%1/swap}"
-			swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
-			swapsize=$((${swapsize}/1000))"M"
-			sgdisk ${device} -n=2:0:+${swapsize} -t=2:8200 -c=0:swap
-			echo "${txtautopartcreate//%1/root}"
-			sgdisk ${device} -n=3:0:0 -c=0:root
+			echo "${txtautopartcreate//%1/EFI boot (2GB)}"
+			sgdisk ${device} -n=1:0:+2048M -t=1:ef00 -c=0:boot
+			if [ "${want_swap}" = "1" ]; then
+				echo "${txtautopartcreate//%1/swap}"
+				swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
+				swapsize=$((${swapsize}/1000))"M"
+				sgdisk ${device} -n=2:0:+${swapsize} -t=2:8200 -c=0:swap
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=3:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=$(get_partition_name "${device}" 2)
+				rootdev=$(get_partition_name "${device}" 3)
+			else
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=2:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=""
+				rootdev=$(get_partition_name "${device}" 2)
+			fi
 			echo ""
 			pressanykey
-			bootdev=$(get_partition_name "${device}" 1)
-			swapdev=$(get_partition_name "${device}" 2)
-			rootdev=$(get_partition_name "${device}" 3)
 			efimode="1"
 		fi
 	fi
@@ -378,8 +414,8 @@ diskpartautoefiusb(){
 			clear
 			echo "${txtautopartclear}"
 			parted ${device} mklabel gpt
-			echo "${txtautopartcreate//%1/EFI boot}"
-			sgdisk ${device} -n=1:0:+1024M -t=1:ef00
+			echo "${txtautopartcreate//%1/EFI boot (2GB)}"
+			sgdisk ${device} -n=1:0:+2048M -t=1:ef00
 			echo "${txtautopartcreate//%1/BIOS boot}"
 			sgdisk ${device} -n=2:0:+31M -t=2:ef02
 			echo "${txtautopartcreate//%1/root}"
@@ -517,32 +553,31 @@ mountmenu(){
 
 
 formatdevices(){
-	if (dialog --backtitle "${apptitle}" --title "${txtformatdevices}" --defaultno --yesno "${txtformatdeviceconfirm}" 0 0) then
+	if (dialog --backtitle "${apptitle}" --title "${txtformatdevices}" --defaultno --yesno "${txtformatdeviceconfirm}" 0 0); then
 		fspkgs=""
 		if [ ! "${bootdev}" = "" ]; then
-			formatbootdevice boot ${bootdev}
+			formatbootdevice boot ${bootdev} || return 1
 		fi
 		if [ ! "${swapdev}" = "" ]; then
-			formatswapdevice swap ${swapdev}
+			formatswapdevice swap ${swapdev} || return 1
 		fi
-		formatdevice root ${rootdev}
+		formatdevice root ${rootdev} || return 1
 		if [ ! "${homedev}" = "" ]; then
-			formatdevice home ${homedev}
+			formatdevice home ${homedev} || return 1
 		fi
 	fi
 }
 formatbootdevice(){
 	options=()
-	if [ "${efimode}" == "1" ]||[ "${efimode}" = "2" ]; then
-		options+=("fat32" "(EFI)")
+	if [ "${efimode}" = "1" ] || [ "${efimode}" = "2" ] || [ "${eficomputer}" = "1" ]; then
+		options+=("fat32" "(EFI System Partition - Required)")
+	else
+		options+=("ext4" "(Recommended for BIOS boot)")
+		options+=("ext2" "")
+		options+=("ext3" "")
+		options+=("fat32" "")
 	fi
-	options+=("ext2" "")
-	options+=("ext3" "")
-	options+=("ext4" "")
-	if [ ! "${efimode}" = "1" ]&&[ ! "${efimode}" = "2" ]; then
-		options+=("fat32" "(EFI)")
-	fi
-	sel=$(dialog --backtitle "${apptitle}" --title "${txtformatdevice}" --menu "${txtselectpartformat//%1/${1} (${2})}" 0 0 0 \
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtformatbootdevice}" --menu "${txtselectpartformatboot//%1/${1} (${2})}" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
 	if [ ! "$?" = "0" ]; then
@@ -566,8 +601,8 @@ formatbootdevice(){
 		;;
 		fat32)
 			fspkgs="${fspkgs[@]} dosfstools"
-			echo "mkfs.fat ${2}"
-			mkfs.fat ${2}
+			echo "mkfs.fat -F32 ${2}"
+			mkfs.fat -F32 ${2}
 		;;
 	esac
 	echo ""
@@ -597,17 +632,25 @@ formatswapdevice(){
 }
 formatdevice(){
 	options=()
-	options+=("btrfs" "")
-	options+=("ext4" "")
+	options+=("btrfs" "(Modern - Subvolumes, snapshots, compression)")
+	options+=("ext4" "(Traditional stable)")
+	options+=("xfs" "(High performance)")
+	options+=("f2fs" "(Flash friendly)")
 	options+=("ext3" "")
 	options+=("ext2" "")
-	options+=("xfs" "")
-	options+=("f2fs" "")
 	options+=("jfs" "")
 	if [ ! "${3}" = "noluks" ]; then
 		options+=("luks" "encrypted")
 	fi
-	sel=$(dialog --backtitle "${apptitle}" --title "${txtformatdevice}" --menu "${txtselectpartformat//%1/${1} (${2})}" 0 0 0 \
+
+	local title="${txtformatdevice}"
+	local prompt="${txtselectpartformat//%1/${1} (${2})}"
+	if [ "${1}" = "root" ]; then
+		title="${txtformatrootdevice}"
+		prompt="${txtselectpartformatroot//%1/${1} (${2})}"
+	fi
+
+	sel=$(dialog --backtitle "${apptitle}" --title "${title}" --menu "${prompt}" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
 	if [ ! "$?" = "0" ]; then
@@ -2093,6 +2136,7 @@ loadstrings(){
 	txteditparts="Edit Partitions"
 
 	txtautopartsconfirm="Selected device : %1\n\nAll data will be erased ! \n\nContinue ?"
+	txtcreateswap="Create a swap partition ?\n\n(Select 'No' if you plan to use zram / swap in RAM)"
 
 	txtautopartclear="Clear all partition data"
 	txtautopartcreate="Create %1 partition"
@@ -2105,6 +2149,8 @@ loadstrings(){
 	txtformatmountmenu="Format and Mount"
 	txtformatdevices="Format Devices"
 	txtformatdevice="Format Device"
+	txtformatbootdevice="Format BOOT / EFI Partition"
+	txtformatrootdevice="Format ROOT Partition"
 	txtmount="Mount"
 	txtunmount="Unmount"
 	txtmountdesc="Install or Config"
@@ -2112,6 +2158,8 @@ loadstrings(){
 	txtformatdeviceconfirm="Warning, all data on selected devices will be erased ! \nFormat devices ?"
 
 	txtselectpartformat="Select partition format for %1 :"
+	txtselectpartformatboot="Select filesystem for BOOT / EFI partition %1 :"
+	txtselectpartformatroot="Select filesystem for ROOT partition %1 :"
 	txtformatingpart="Formatting partition %1 as"
 	txtcreateluksdevice="Create luks device :"
 	txtopenluksdevice="Open luks device :"
