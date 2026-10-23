@@ -33,7 +33,7 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 <<<<<<< HEAD
 =======
 - **Disposition clavier universelle (Console, X11, Wayland)** : Configuration automatique de la disposition clavier (AZERTY `fr`) pour la console (`vconsole.conf`), les sessions graphiques (`/etc/X11/xorg.conf.d/00-keyboard.conf`) et KDE Plasma (`/etc/xdg/kxkbrc`).
->>>>>>> 1a6be0a (correction/gestion locale clavier wayland)
+>>>>>>> 
 - **Traductions épurées** : Maintenance ciblée uniquement sur le Français et l'Anglais (suppression des fichiers de langues orphelins).
 
 ### 2. `archdi` (Post-installation & Environnement de bureau)
