@@ -1,18 +1,7 @@
-# Translations
+# Translations / Traductions
 
-Translations is simple:
+> Dans ce fork modernisé d'**archfi / archdi**, seules les langues **Anglais** et **Français** sont maintenues activement.
+> In this modernized fork of **archfi / archdi**, only **English** and **French** are actively maintained.
 
-- fork the project.
-- create your language file.
-- pull Request your change.
-- you can test your change with the next command:
-
-```
-sh archfi -t {githubusername} {branchname}
-```
-
-As exemple:
-
-```
-sh archfi -t matmoul master
-```
+- `English` (Default / Par défaut)
+- `French` (Français)

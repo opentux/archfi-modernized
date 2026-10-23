@@ -41,6 +41,7 @@ load_strings_en(){
     txtdemenu="Desktop Environments"
     txtfontsmenu="System Fonts"
     txtservicesmenu="System Services (Bluetooth, CUPS, Trim)"
+    txttuxedomenu="TUXEDO Laptop (Drivers DKMS, TCC & Power Mgmt)"
     txtappsmenu="Popular Applications"
     txtaurmenu="AUR Helper (yay / paru)"
     txtreboot="Reboot System"
@@ -90,6 +91,17 @@ load_strings_en(){
     
     txtaurtitle="AUR Helper"
     txtaurdesc="Install AUR helper (compiled as non-root) :"
+
+    txttuxedotitle="TUXEDO Laptop Support"
+    txttuxedodesc="Select TUXEDO configuration option:"
+    txttuxedofull="Full TUXEDO Suite (Drivers DKMS + TCC + Power Mgmt - Recommended)"
+    txttuxedodrivers="TUXEDO Drivers only (tuxedo-drivers-dkms, headers & dkms)"
+    txttuxedotcc="TUXEDO Control Center only (tuxedo-control-center-bin)"
+    txttuxedopower="Switch to TUXEDO Power Management (Mask PPD/tuned/TLP, enable tccd)"
+    txttuxedorestore="Restore Default Power Management (Unmask PPD, disable tccd)"
+    txttuxedosuccess="TUXEDO configuration complete!\n\nConflicting services (power-profiles-daemon, tuned, tuned-ppd, tlp) have been masked and tccd.service is enabled.\n\nPlease reboot your system to load the kernel modules."
+    txttuxedorestoresuccess="Default power management restored!\n\npower-profiles-daemon has been unmasked and tccd.service disabled."
+    txtuserrequired="Please create a standard user first (Option 3 in main menu) to build AUR packages!"
 }
 
 load_strings_fr(){
@@ -110,6 +122,7 @@ load_strings_fr(){
     txtdemenu="Environnements de Bureau"
     txtfontsmenu="Polices de Caractères"
     txtservicesmenu="Services Système (Bluetooth, CUPS, Trim)"
+    txttuxedomenu="PC Portables TUXEDO (Pilotes DKMS, TCC & Énergie)"
     txtappsmenu="Applications Populaires"
     txtaurmenu="Gestionnaire AUR (yay / paru)"
     txtreboot="Redémarrer le Système"
@@ -159,6 +172,17 @@ load_strings_fr(){
     
     txtaurtitle="Gestionnaire AUR"
     txtaurdesc="Installer un gestionnaire AUR (compilé via utilisateur standard) :"
+
+    txttuxedotitle="Support Matériel TUXEDO"
+    txttuxedodesc="Sélectionnez l'option de configuration TUXEDO :"
+    txttuxedofull="Pack TUXEDO Complet (Pilotes DKMS + TCC + Gestion d'énergie - Recommandé)"
+    txttuxedodrivers="Pilotes TUXEDO uniquement (tuxedo-drivers-dkms, headers & dkms)"
+    txttuxedotcc="TUXEDO Control Center uniquement (tuxedo-control-center-bin)"
+    txttuxedopower="Activer la gestion d'énergie TUXEDO (Masquer PPD/tuned/TLP, activer tccd)"
+    txttuxedorestore="Restaurer la gestion d'énergie par défaut (Démasquer PPD, désactiver tccd)"
+    txttuxedosuccess="Configuration TUXEDO terminée avec succès !\n\nLes services en conflit (power-profiles-daemon, tuned, tuned-ppd, tlp) ont été masqués et tccd.service est activé.\n\nVeuillez redémarrer le système pour charger les modules du noyau."
+    txttuxedorestoresuccess="Gestion d'énergie par défaut restaurée !\n\npower-profiles-daemon a été démasqué et tccd.service désactivé."
+    txtuserrequired="Veuillez d'abord créer un utilisateur standard (Option 3 du menu principal) pour compiler les paquets AUR !"
 }
 
 # Auto-detect language
@@ -267,6 +291,54 @@ menu_user(){
 }
 
 # --------------------------------------------------------
+# Helpers: AUR & Kernel DKMS
+# --------------------------------------------------------
+check_regular_user(){
+    target_user=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd | head -n 1)
+    if [ -z "${target_user}" ]; then
+        dialog --backtitle "${apptitle}" --title "Error" --msgbox "${txtuserrequired}" 0 0
+        return 1
+    fi
+    return 0
+}
+
+install_kernel_headers_and_dkms(){
+    echo "Checking and installing DKMS and matching kernel headers..."
+    local headers_pkgs="dkms"
+    for k in linux linux-lts linux-zen linux-hardened; do
+        if pacman -Q "$k" &>/dev/null; then
+            headers_pkgs+=" ${k}-headers"
+        fi
+    done
+    if [ "$headers_pkgs" = "dkms" ]; then
+        headers_pkgs="dkms linux-headers"
+    fi
+    pacman -S --needed --noconfirm ${headers_pkgs}
+}
+
+install_aur_pkgs(){
+    local user="${1}"
+    shift
+    local pkgs="$@"
+
+    echo "Ensuring build prerequisites (base-devel, git)..."
+    pacman -S --needed --noconfirm base-devel git
+
+    if command -v yay &>/dev/null; then
+        echo "Installing ${pkgs} using yay..."
+        su - "${user}" -c "yay -S --needed --noconfirm ${pkgs}"
+    elif command -v paru &>/dev/null; then
+        echo "Installing ${pkgs} using paru..."
+        su - "${user}" -c "paru -S --needed --noconfirm ${pkgs}"
+    else
+        for pkg in ${pkgs}; do
+            echo "Building and installing ${pkg} from AUR using makepkg (user: ${user})..."
+            su - "${user}" -c "rm -rf /tmp/${pkg} && git clone https://aur.archlinux.org/${pkg}.git /tmp/${pkg} && cd /tmp/${pkg} && makepkg -si --noconfirm && rm -rf /tmp/${pkg}"
+        done
+    fi
+}
+
+# --------------------------------------------------------
 # Module: GPU Drivers
 # --------------------------------------------------------
 menu_gpu(){
@@ -301,6 +373,7 @@ menu_gpu(){
             ;;
             "nvidia-dkms")
                 echo "Installing NVIDIA DKMS drivers..."
+                install_kernel_headers_and_dkms
                 pacman -S --needed --noconfirm nvidia-dkms nvidia-utils lib32-nvidia-utils nvidia-settings
             ;;
             "vm")
@@ -517,6 +590,104 @@ menu_services(){
 }
 
 # --------------------------------------------------------
+# Module: TUXEDO Laptop Support
+# --------------------------------------------------------
+tuxedo_apply_power_management(){
+    echo "Disabling and masking conflicting power management services..."
+    for srv in power-profiles-daemon.service tuned.service tuned-ppd.service tlp.service auto-cpufreq.service; do
+        systemctl stop "${srv}" 2>/dev/null || true
+        systemctl disable "${srv}" 2>/dev/null || true
+        systemctl mask "${srv}" 2>/dev/null || true
+    done
+
+    echo "Enabling TUXEDO Control Center daemon (tccd)..."
+    systemctl unmask tccd.service 2>/dev/null || true
+    systemctl enable tccd.service 2>/dev/null || true
+    systemctl start tccd.service 2>/dev/null || true
+
+    systemctl unmask tccd-sleep.service 2>/dev/null || true
+    systemctl enable tccd-sleep.service 2>/dev/null || true
+    systemctl start tccd-sleep.service 2>/dev/null || true
+}
+
+tuxedo_restore_power_management(){
+    echo "Disabling TUXEDO Control Center daemon..."
+    systemctl stop tccd.service 2>/dev/null || true
+    systemctl disable tccd.service 2>/dev/null || true
+    systemctl stop tccd-sleep.service 2>/dev/null || true
+    systemctl disable tccd-sleep.service 2>/dev/null || true
+
+    echo "Unmasking and restoring standard power services..."
+    for srv in power-profiles-daemon.service tuned.service tuned-ppd.service tlp.service auto-cpufreq.service; do
+        systemctl unmask "${srv}" 2>/dev/null || true
+    done
+    systemctl enable power-profiles-daemon.service 2>/dev/null || true
+    systemctl start power-profiles-daemon.service 2>/dev/null || true
+}
+
+menu_tuxedo(){
+    options=()
+    options+=("full" "${txttuxedofull}")
+    options+=("drivers" "${txttuxedodrivers}")
+    options+=("tcc" "${txttuxedotcc}")
+    options+=("power" "${txttuxedopower}")
+    options+=("restore_power" "${txttuxedorestore}")
+
+    sel=$(dialog --backtitle "${apptitle}" --title "${txttuxedotitle}" \
+        --menu "${txttuxedodesc}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+
+    if [ "$?" = "0" ]; then
+        case ${sel} in
+            "full")
+                check_regular_user || return 1
+                clear
+                echo "=== Step 1/3: Installing Kernel Headers & DKMS ==="
+                install_kernel_headers_and_dkms
+                echo ""
+                echo "=== Step 2/3: Installing tuxedo-drivers-dkms & tuxedo-control-center-bin ==="
+                install_aur_pkgs "${target_user}" tuxedo-drivers-dkms tuxedo-control-center-bin
+                echo ""
+                echo "=== Step 3/3: Configuring Power Management (mask PPD/tuned/tlp & enable tccd) ==="
+                tuxedo_apply_power_management
+                echo ""
+                pressanykey
+                dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txttuxedosuccess}" 0 0
+            ;;
+            "drivers")
+                check_regular_user || return 1
+                clear
+                echo "Installing Kernel Headers & DKMS..."
+                install_kernel_headers_and_dkms
+                echo "Installing tuxedo-drivers-dkms..."
+                install_aur_pkgs "${target_user}" tuxedo-drivers-dkms
+                pressanykey
+            ;;
+            "tcc")
+                check_regular_user || return 1
+                clear
+                echo "Installing tuxedo-control-center-bin..."
+                install_aur_pkgs "${target_user}" tuxedo-control-center-bin
+                pressanykey
+            ;;
+            "power")
+                clear
+                tuxedo_apply_power_management
+                pressanykey
+                dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txttuxedosuccess}" 0 0
+            ;;
+            "restore_power")
+                clear
+                tuxedo_restore_power_management
+                pressanykey
+                dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txttuxedorestoresuccess}" 0 0
+            ;;
+        esac
+    fi
+}
+
+# --------------------------------------------------------
 # Module: Popular Applications
 # --------------------------------------------------------
 menu_apps(){
@@ -569,14 +740,7 @@ menu_aur(){
         3>&1 1>&2 2>&3)
         
     if [ "$?" = "0" ]; then
-        # Check non-root user
-        regular_users=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd)
-        if [ -z "${regular_users}" ]; then
-            dialog --backtitle "${apptitle}" --title "Error" --msgbox "Please create a standard user first before installing an AUR helper!" 0 0
-            return 1
-        fi
-        
-        target_user=$(echo "${regular_users}" | head -n 1)
+        check_regular_user || return 1
         clear
         echo "Installing prerequisites (base-devel, git)..."
         pacman -S --needed --noconfirm base-devel git
@@ -603,9 +767,10 @@ mainmenu(){
         options+=("6" "${txtdemenu}")
         options+=("7" "${txtfontsmenu}")
         options+=("8" "${txtservicesmenu}")
-        options+=("9" "${txtappsmenu}")
-        options+=("10" "${txtaurmenu}")
-        options+=("11" "${txtreboot}")
+        options+=("9" "${txttuxedomenu}")
+        options+=("10" "${txtappsmenu}")
+        options+=("11" "${txtaurmenu}")
+        options+=("12" "${txtreboot}")
         
         sel=$(dialog --backtitle "${apptitle}" --title "${txtmainmenu}" \
             --cancel-button "${txtexit}" --default-item "${default_item}" \
@@ -627,9 +792,10 @@ mainmenu(){
             "6") menu_de; default_item="7";;
             "7") menu_fonts; default_item="8";;
             "8") menu_services; default_item="9";;
-            "9") menu_apps; default_item="10";;
-            "10") menu_aur; default_item="11";;
-            "11")
+            "9") menu_tuxedo; default_item="10";;
+            "10") menu_apps; default_item="11";;
+            "11") menu_aur; default_item="12";;
+            "12")
                 if dialog --backtitle "${apptitle}" --title "${txtreboot}" --yesno "${txtreboot} ?" 0 0; then
                     clear
                     reboot

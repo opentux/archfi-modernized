@@ -24,14 +24,20 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 - **Prise en charge du matériel moderne** : Détection et nommage correct des partitions NVMe, eMMC et périphériques loop (`nvme0n1pX`).
 - **Options Btrfs optimisées** : Montage par défaut moderne (`rw,noatime,commit=120,space_cache=v2,compress=zstd:1`) et support revu des sous-volumes (`@`, `@home`, `@snapshots`, etc.).
 - **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
-- **Noyaux et paquets de base** : Nettoyage et rafraîchissement des paquets essentiels.
+- **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap.
+- **Traductions épurées** : Maintenance ciblée uniquement sur le Français et l'Anglais (suppression des fichiers de langues orphelins).
 
 ### 2. `archdi` (Post-installation & Environnement de bureau)
 Un gros travail d'actualisation a déjà été effectué pour adapter le script aux standards actuels :
 - **Listing des paquets dépoussiéré** : Nettoyage en profondeur des paquets abandonnés ou renommés dans les dépôts officiels.
+- **Support PC Portables TUXEDO & Gestion d'énergie** :
+  - Intégration du pack complet TUXEDO : `tuxedo-drivers-dkms` et `tuxedo-control-center-bin` (AUR).
+  - Détection automatique du/des noyau(x) installé(s) et installation transparente des headers et de `dkms`.
+  - Résolution des conflits d'énergie : arrêt et masquage automatique (`systemctl mask`) des services concurrents (`power-profiles-daemon`, `tuned`, `tuned-ppd`, `tlp`, `auto-cpufreq`) pour confier la gestion exclusive à `tccd.service` (TUXEDO Control Center), avec option de restauration.
+
 - **Environnements de bureau modernes** : Prise en charge de **KDE Plasma 6** (avec Wayland et session moderne) et **GNOME** (générations récentes / GNOME 5x).
 - **Dépôts Multilib & Tweaks Pacman** : Menu dédié pour activer d'un clic le dépôt `[multilib]` (essentiel pour le jeu/Steam et la compatibilité 32-bit), avec 10 téléchargements parallèles et `ILoveCandy`.
-- **Pilotes GPU récents** : Intégration du pilote open-source officiel **`nvidia-open`** (architectures Turing, Ampere, Ada Lovelace et plus récentes) aux côtés des pilotes AMD, Intel et NVIDIA propriétaires.
+- **Pilotes GPU récents** : Intégration du pilote open-source officiel **`nvidia-open`** (architectures Turing, Ampere, Ada Lovelace et plus récentes) aux côtés des pilotes AMD, Intel et NVIDIA propriétaires (avec support DKMS automatisé).
 - **Audio moderne** : Intégration de la stack moderne **PipeWire** (avec `pipewire-pulse`, `wireplumber`) en remplacement du vieux PulseAudio.
 - **Boîte à outils système au choix** : Sélection interactive d'outils CLI et utilitaires de surveillance modernes :
   - `nvtop` (monitoring GPU en temps réel pour AMD/Intel/NVIDIA),
@@ -73,17 +79,20 @@ Clonez ou téléchargez les scripts dans votre environnement live :
 
 ```bash
 git clone https://github.com/opentux/archfi-modernized.git
-cd archfi
-chmod +x archfi archdi
+cd archfi-modernized
+chmod +x archfi
 ./archfi
 ```
 
 Suivez les menus guidés pour partitionner votre disque, installer la base système et le chargeur d'amorçage.
 
 ### 3. Lancer `archdi` (Post-installation)
-Une fois le système de base en place (directement depuis le chroot ou après avoir redémarré sur votre nouveau système) :
+Une fois le système de base en place (après avoir redémarré sur votre nouveau système) :
 
 ```bash
+git clone https://github.com/opentux/archfi-modernized.git
+cd archfi-modernized
+chmod +x archdi
 ./archdi
 ```
 

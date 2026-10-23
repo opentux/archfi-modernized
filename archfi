@@ -957,6 +957,8 @@ installbase(){
 	fi
 
 	options=()
+	options+=("${chosen_kernel}-headers" "Kernel Headers (${chosen_kernel})" on)
+	options+=("dkms" "Dynamic Kernel Module Support (DKMS)" on)
 	options+=("linux-firmware" "(${txtoptional})" on)
 	options+=("intel-ucode" "Intel CPU Microcode" ${intel_state})
 	options+=("amd-ucode" "AMD CPU Microcode" ${amd_state})
@@ -2126,7 +2128,7 @@ loadstrings(){
 	txtparalleldownloads="Parallel Downloads"
 	txtinstallarchlinux="Install Arch Linux"
 	txtinstallarchlinuxkernel="Kernel"
-	txtinstallarchlinuxfirmwares="Firmwares"
+	txtinstallarchlinuxfirmwares="Firmwares, Headers & DKMS"
 	txtinstallarchlinuxfilesystems="File Systems"
 	txtinstallarchlinuxcustompackagelist="Custom Package List"
 	txtconfigarchlinux="Config Arch Linux"
