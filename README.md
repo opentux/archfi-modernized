@@ -92,19 +92,26 @@ Même si une bonne partie du décrassage est faite, il reste du pain sur la plan
 ### 1. Démarrer sur l'ISO Arch Linux
 Démarrez votre machine avec une image d'installation récente d'Arch Linux et connectez-vous au réseau (ex: `iwctl` en Wi-Fi).
 
-### 2. Récupérer et lancer `archfi`
+### 3. Installer 'git'
+téléchargez et installer le package manquant avec pacman :
+
+```bash
+pacman -Sy git
+```
+
+### 3. Récupérer et lancer `archfi`
 Clonez ou téléchargez les scripts dans votre environnement live :
 
 ```bash
 git clone https://github.com/opentux/archfi-modernized.git
 cd archfi-modernized
-chmod +x archfi
+chmod +x archfi archdi
 ./archfi
 ```
 
 Suivez les menus guidés pour partitionner votre disque, installer la base système et le chargeur d'amorçage.
 
-### 3. Lancer `archdi` (Post-installation)
+### 3. Lancer `archdi` (si executé seul en post-installation)
 Une fois le système de base en place (après avoir redémarré sur votre nouveau système) :
 
 ```bash
@@ -114,7 +121,7 @@ chmod +x archdi
 ./archdi
 ```
 
-Vous pourrez alors activer Multilib, installer vos pilotes GPU (`nvidia-open`, AMD...), déployer Plasma 6 ou GNOME, et sélectionner vos outils favoris (`nvtop`, `inxi`, etc.).
+Vous pourrez alors activer Multilib, installer vos pilotes GPU (`nvidia-open-dkms`, AMD...), déployer Plasma 6 ou GNOME, et sélectionner vos outils favoris (`nvtop`, `inxi`, etc.).
 
 ---
 
