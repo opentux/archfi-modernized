@@ -127,6 +127,7 @@ txtarchdilaunch="Launch archdi"
 
 txtbtrfslayout="Btrfs Layout"
 txtbtrfssubvols="Subvolumes (@, @home, @snapshots, @var_log, @pkg)"
+txtbtrfssubvolsnosnap="Subvolumes without snapshots (@, @home, @var_log, @pkg - Lab / nodatacow)"
 txtbtrfssimple="Simple (@root subvolume)"
 txtbtrfsconfirm="Configure Btrfs layout for %1 :"
 txtbtrfsmountopts="Btrfs Mount Options"

@@ -22,19 +22,23 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 ### 1. `archfi` (Installation du système de base)
 - **Monorepo & Détection locale** : `archdi` est rapatrié dans le même dossier et détecté automatiquement via `scriptdir`.
 - **Prise en charge du matériel moderne** : Détection et nommage correct des partitions NVMe, eMMC et périphériques loop (`nvme0n1pX`).
-- **Partitionnement moderne & Swap en RAM (zram)** :
+- **Partitionnement moderne & Swap en RAM (ZRAM)** :
   - Partition EFI / boot dimensionnée à **2 Go** par défaut (indispensable aujourd'hui pour accueillir plusieurs noyaux, initramfs de secours et UKIs).
   - Question interactive demandant si l'utilisateur souhaite créer ou non une partition swap sur le disque (afin de privilégier zram / swap en RAM). En l'absence de swap, la partition racine (`/`) occupe l'intégralité restante du disque.
-- **Menu de formatage clarifié** : Séparation stricte entre le formatage de la partition BOOT/EFI (obligatoirement en FAT32 sous UEFI) et de la partition ROOT (accès direct à Btrfs, Ext4, XFS, F2FS avec descriptions claires), avec arrêt propre en cas d'annulation.
-- **Options Btrfs optimisées** : Montage par défaut moderne (`rw,noatime,commit=120,space_cache=v2,compress=zstd:1`) et support revu des sous-volumes (`@`, `@home`, `@snapshots`, etc.).
-- **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
+  - **Activation automatique de ZRAM (`zram-generator`)** : pré-coché dans `pacstrap` dès qu'aucun swap disque n'est créé, avec configuration automatique en compression `zstd`, taille 100% RAM, priorité 100 et `vm.swappiness=180`.
+- **Menu de formatage clarifié & Mode Lab Btrfs (`nodatacow,nodatasum`)** :
+  - Séparation stricte entre le formatage de la partition BOOT/EFI (obligatoirement en FAT32 sous UEFI) et de la partition ROOT (accès direct à Btrfs, Ext4, XFS, F2FS avec descriptions claires), avec arrêt propre en cas d'annulation.
+  - **Options Btrfs sur mesure (Standard vs Lab VM/Perf)** : choix entre `compress=zstd:1` et/ou `nodatacow` + `nodatasum` sur une base optimisée (`rw,noatime,ssd,commit=120,space_cache=v2`).
+  - **Sous-volumes Btrfs avec ou sans Snapshots** : lorsque `nodatacow` est sélectionné pour un usage Lab, le mode **Sous-volumes sans snapshots** (`@`, `@home`, `@var_log`, `@pkg` — sans `@snapshots`) est automatiquement mis en tête et pré-sélectionné, tout en conservant le mode complet avec `@snapshots` ou le mode classique sans sous-volumes.
+- **Pacman QoL & Sécurité `pacstrap`** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`, avec vérification stricte du code retour de `pacstrap` pour éviter toute poursuite sur un `/mnt` incomplet.
 - **Réseau & Wi-Fi clé en main** : Intégration et activation automatique de `NetworkManager.service` et `iwd` dès l'installation de base et lors du déploiement des bureaux, garantissant le bon fonctionnement immédiat de l'applet réseau et du Wi-Fi.
-- **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap. Support du noyau ultra-performant **`linux-cachyos`** avec activation sécurisée des dépôts CachyOS (mode sans surcharge RAM en live boot, détection CPU v3/v4).
-- **Optimisations CachyOS & Tweaks Système** :
+- **Noyaux, En-têtes, DKMS & Mirrorlists CachyOS dédiés** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap. Support du noyau ultra-performant **`linux-cachyos`** avec fichiers mirrorlists dédiés par architecture (`cachyos-v3-mirrorlist` sur `/repo/x86_64_v3/$repo`, `cachyos-v4-mirrorlist` sur `/repo/x86_64_v4/$repo` et `cachyos-mirrorlist`) et `SigLevel = PackageRequired`.
+- **Optimisations CachyOS, Bootloaders Express & Kernel Cmdline automatique** :
   - Configuration interactive des règles I/O Schedulers udev (scheduler **`adios`** pour SSD/NVMe et `bfq` pour HDD).
   - Tweaks sysctl (`kernel.split_lock_mitigate=0`, `vm.max_map_count = 2147483642`).
-  - Optimisation avancée de `mkinitcpio.conf` (modules NVMe + NVIDIA après installation des pilotes, compression ultra-rapide `lz4`, Plymouth avec thème `spinner`).
-- **Création d'utilisateur & Sudoers propre** : Menu dédié à la création d'un compte utilisateur standard directement depuis `archfi`, avec ajout au groupe `wheel` et option pour créer un fichier nominatif sans mot de passe (`NOPASSWD`) dans `/etc/sudoers.d/<nomduuser>` (droits 0440).
+  - Optimisation avancée de `mkinitcpio.conf` (modules NVMe + NVIDIA uniquement si déjà installés pour éviter les erreurs en `pacstrap`, compression ultra-rapide `lz4`, Plymouth avec thème `spinner`).
+  - **Bootloader GRUB Express (1-clic)** et injection automatique des paramètres noyau `quiet splash` (Plymouth), `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` (Wayland NVIDIA) et `rd.luks.name=...` (compatibilité double `sd-encrypt` systemd & `encrypt` standard) dans GRUB, `systemd-boot` et `rEFInd`.
+- **Création d'utilisateur, Sudoers propre & Nettoyage automatique** : Menu dédié à la création d'un compte utilisateur standard directement depuis `archfi`, avec ajout au groupe `wheel`, option `NOPASSWD` dans `/etc/sudoers.d/<nomduuser>` (droits 0440), et suppression automatique des fichiers temporaires d'installation (`/root/archfi`, `/root/lng`, `99-installer-temp`) au démontage.
 - **Internationalisation & Français intégral (Console, X11, Wayland, Plasma & Apps)** :
   - Configuration complète de la locale système (`fr_FR.UTF-8 UTF-8` dans `locale.gen` et `locale.conf`).
   - Configuration native de **KDE Plasma 6** en Français via `/etc/xdg/plasma-localerc` (`LANGUAGE=fr_FR:fr`).
@@ -58,29 +62,41 @@ Un gros travail d'actualisation a déjà été effectué pour adapter le script 
   - Résolution des conflits d'énergie : arrêt et masquage automatique (`systemctl mask`) des services concurrents (`power-profiles-daemon`, `tuned`, `tuned-ppd`, `tlp`, `auto-cpufreq`) pour confier la gestion exclusive à `tccd.service` (TUXEDO Control Center), avec option de restauration.
 
 - **Pack CachyOS, Kernel, Schedulers & Optimisations Système** :
-  - **Dépôt officiel CachyOS** : déploiement automatique avec détection d'architecture CPU (x86-64-v3, x86-64-v4, standard) et clés de confiance GPG.
+  - **Dépôt officiel CachyOS** : déploiement automatique avec détection d'architecture CPU (`x86_64_v3`, `x86_64_v4`, standard), mirrorlists dédiés (`cachyos-v3-mirrorlist`, `cachyos-v4-mirrorlist`) et clés de confiance GPG.
   - **Noyau CachyOS & Settings** : installation de `linux-cachyos`, `linux-cachyos-headers` et `cachyos-settings`.
   - **Scheduler I/O `adios`** : règle udev dédiée `/etc/udev/rules.d/60-ioschedulers.rules` appliquant le scheduler `adios` pour SSD et NVMe, et `bfq` pour disques HDD.
   - **Tweaks Sysctl** : fichier `/etc/sysctl.d/99-splitlock.conf` (`kernel.split_lock_mitigate=0` anti-stutter et `vm.max_map_count = 2147483642` pour les jeux Steam/Proton/Unreal Engine).
+  - **ZRAM Swap, Ananicy-cpp, Sched-ext (`scx_lavd`) & Rate Mirrors** :
+    - Configuration de `zram-generator` (`zstd`, 100% RAM, `vm.swappiness=180`).
+    - Installation de **`ananicy-cpp`** + **`cachyos-ananicy-rules`** (démon de priorisation automatique CPU/I/O).
+    - Support optionnel des ordonnanceurs CPU BPF **`scx-scheds`** (profil gaming/laptop **`scx_lavd`**).
+    - Tri intelligent des miroirs Arch & CachyOS via **`cachyos-rate-mirrors`** (ou fallback `reflector`).
   - **mkinitcpio & Boot Splash Plymouth** :
     - Injection automatique de `nvme` et des modules NVIDIA propriétaires/open (`nvidia`, `nvidia_modeset`, `nvidia_uvm`, `nvidia_drm`).
-    - Intégration de Plymouth avec le thème moderne **`spinner`**.
+    - Intégration de Plymouth avec le thème moderne **`spinner`** et ajout automatique de `quiet splash` dans le bootloader (GRUB, systemd-boot, rEFInd).
     - Hooks modernes (`systemd autodetect microcode modconf kms block filesystems plymouth`).
     - Compression haute vitesse `lz4` (`COMPRESSION="lz4"`, `COMPRESSION_OPTIONS=(-1)`, `MODULES_DECOMPRESS="yes"`).
-  - Possibilité de lancer le pack complet tout-en-un ou de choisir chaque composant individuellement.
+  - Possibilité de lancer le pack complet tout-en-un (7 étapes) ou de choisir chaque composant individuellement.
 
 - **Environnements de bureau modernes** : Prise en charge de **KDE Plasma 6** (avec Wayland et session moderne) et **GNOME** (générations récentes / GNOME 5x).
 - **Dépôts Multilib & Tweaks Pacman** : Menu dédié pour activer d'un clic le dépôt `[multilib]` (essentiel pour le jeu/Steam et la compatibilité 32-bit), avec 10 téléchargements parallèles et `ILoveCandy`.
-- **Pilotes GPU récents & Graphiques Hybrides (Optimus / Switch MUX)** :
+- **Pilotes GPU récents, Décodage Matériel VA-API & Graphiques Hybrides (Optimus / Switch MUX)** :
   - Profils dédiés pour PC portables hybrides : **Intel + NVIDIA Open** et **AMD + NVIDIA Open**, configurant la stack graphique complète (`intel-media-driver`, `vulkan-intel`, `mesa` 32/64 bits) et l'outil de bascule PRIME (`nvidia-prime` / `prime-run`) pour exploiter le switch MUX ou l'Advanced Optimus.
+  - **Accélération matérielle vidéo (VA-API / NVDEC) & Services veille/énergie NVIDIA** :
+    - Installation de `libva-nvidia-driver` (décodage vidéo matériel sous Wayland pour Firefox/Chrome/MPV), `libva-intel-driver` / `libva-mesa-driver` et `libva-utils`.
+    - Configuration de `/etc/modprobe.d/nvidia.conf` (`modeset=1 fbdev=1`, `NVreg_PreserveVideoMemoryAllocations=1`) et injection dans les paramètres noyau du bootloader.
+    - Activation des services `nvidia-suspend.service`, `nvidia-hibernate.service`, `nvidia-resume.service` et **`nvidia-powerd.service`** (Dynamic Boost pour GPU mobile).
   - **Détection dynamique des noyaux pour NVIDIA Open** : si un noyau alternatif est détecté (`linux-zen`, `linux-lts`, `linux-hardened`), le script installe automatiquement **`nvidia-open-dkms`** avec ses en-têtes associés, empêchant `pacman` de forcer l'installation du noyau `linux` standard.
   - Pilotes AMD Radeon, Intel Graphics et NVIDIA Propriétaire (`nvidia-dkms`) disponibles pour toutes configurations.
-- **Audio moderne** : Intégration de la stack moderne **PipeWire** (avec `pipewire-pulse`, `wireplumber`) en remplacement du vieux PulseAudio.
-- **Boîte à outils & Applications Populaires** : Sélection interactive enrichie :
+- **Audio moderne & Services Système étendus** :
+  - Stack moderne **PipeWire** (`pipewire-pulse`, `wireplumber`) en remplacement du vieux PulseAudio.
+  - Services pré-configurables : `NetworkManager`, `Bluetooth`, `CUPS`, `UFW` Firewall, `fstrim.timer` (SSD TRIM), **`zram-generator`**, **`paccache.timer`** (nettoyage automatique hebdomadaire du cache pacman), **Flatpak + Flathub** (avec intégration logithèque KDE Discover / GNOME Software), et option **Snapper + `snap-pac` + `btrfs-assistant`** (désactivée par défaut pour préserver les configurations Lab `nodatacow`).
+- **Boîte à outils, Applications Populaires & Gaming** : Sélection interactive enrichie :
   - **Navigateurs Web** : Firefox (avec pack de langue français automatique `firefox-i18n-fr`), Google Chrome (dépôt CachyOS / AUR), Vivaldi (avec codecs multimédia), Chromium.
   - **Gestionnaire de mots de passe** : Bitwarden.
   - **Multimédia** : VLC, SMPlayer (avec thèmes et skins), MPV.
   - **Monitoring & Outils CLI** : `btop`, `htop`, `fastfetch` (intégré et configuré dans `.bashrc` pour s'exécuter automatiquement à l'ouverture de chaque terminal interactif), `nvtop` (monitoring GPU en temps réel), `inxi`, `nmon`.
+  - **Gaming (Optionnel)** : Steam, Lutris, MangoHud + GOverlay (`mangohud`, `lib32-mangohud`, `goverlay`), Feral GameMode (`gamemode`, `lib32-gamemode`), et **`proton-cachyos`** (avec `umu-launcher` & `wine-cachyos`).
   - **Archives** : `p7zip`, `unrar`.
 
 ---

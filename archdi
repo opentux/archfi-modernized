@@ -109,11 +109,15 @@ load_strings_en(){
 
     txtcachyostitle="CachyOS Repository, Kernel & System Tweaks"
     txtcachyosdesc="Select CachyOS / Performance option:"
-    txtcachyosfull="Full CachyOS Suite (Repo + Kernel + adios + sysctl + mkinitcpio/Plymouth - Recommended)"
+    txtcachyosfull="Full CachyOS Suite (Repo + Kernel + adios + sysctl + ZRAM + Ananicy + Plymouth - Recommended)"
     txtcachyosrepoonly="Enable CachyOS Repository only (v3/v4 CPU auto-detection)"
     txtcachyoskernelonly="Install CachyOS Kernel & Settings (linux-cachyos, headers, cachyos-settings)"
     txtcachyosscheduleronly="Configure I/O Schedulers rule (adios on SSD/NVMe, bfq on HDD)"
     txtcachyossysctlonly="Configure Sysctl Tweaks (split_lock_mitigate=0, max_map_count)"
+    txtcachyoszramonly="Configure ZRAM Swap in RAM (zram-generator, zstd, swappiness=180)"
+    txtcachyosananicyonly="Install ananicy-cpp + CachyOS rules (Auto process & gaming priority)"
+    txtcachyosscxonly="Install scx-scheds (scx_lavd BPF CPU scheduler for laptops/gaming)"
+    txtcachyosmirrorsonly="Optimize Mirror Speed (cachyos-rate-mirrors / reflector)"
     txtcachyosmkinitcpioonly="Optimize mkinitcpio (lz4, nvme/nvidia, Plymouth spinner, rebuild)"
     txtcachyossuccess="CachyOS and System Optimizations applied successfully!"
 }
@@ -204,11 +208,15 @@ load_strings_fr(){
 
     txtcachyostitle="Dépôt CachyOS, Noyau & Optimisations Système"
     txtcachyosdesc="Sélectionnez l'option CachyOS / Optimisation :"
-    txtcachyosfull="Pack Complet CachyOS (Dépôt + Noyau + adios + sysctl + mkinitcpio/Plymouth - Recommandé)"
+    txtcachyosfull="Pack Complet CachyOS (Dépôt + Noyau + adios + sysctl + ZRAM + Ananicy + Plymouth - Recommandé)"
     txtcachyosrepoonly="Activer le dépôt CachyOS uniquement (détection CPU v3/v4)"
     txtcachyoskernelonly="Installer le noyau CachyOS & Settings (linux-cachyos, headers, cachyos-settings)"
     txtcachyosscheduleronly="Configurer les règles I/O Schedulers (adios sur SSD/NVMe, bfq sur HDD)"
     txtcachyossysctlonly="Configurer les optimisations Sysctl (split_lock_mitigate=0, max_map_count)"
+    txtcachyoszramonly="Configurer le ZRAM Swap en RAM (zram-generator, zstd, swappiness=180)"
+    txtcachyosananicyonly="Installer ananicy-cpp + règles CachyOS (Priorité auto processus & jeux)"
+    txtcachyosscxonly="Installer scx-scheds (Ordonnanceur CPU BPF scx_lavd pour portable/gaming)"
+    txtcachyosmirrorsonly="Optimiser la vitesse des miroirs (cachyos-rate-mirrors / reflector)"
     txtcachyosmkinitcpioonly="Optimiser mkinitcpio (lz4, nvme/nvidia, Plymouth spinner, regénération)"
     txtcachyossuccess="Optimisations CachyOS et système appliquées avec succès !"
 }
@@ -480,7 +488,65 @@ EOF
     fi
 }
 
+append_kernel_cmdline(){
+    local params="$1"
+    # 1. GRUB (/etc/default/grub)
+    if [ -f /etc/default/grub ]; then
+        local grub_changed=0
+        for p in ${params}; do
+            if ! grep "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub | grep -q "${p}"; then
+                sed -i "s/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 ${p}\"/" /etc/default/grub
+                sed -i 's/  */ /g' /etc/default/grub
+                grub_changed=1
+            fi
+        done
+        if [ "${grub_changed}" = "1" ] && [ -f /boot/grub/grub.cfg ] && command -v grub-mkconfig >/dev/null 2>&1; then
+            echo "Updating GRUB configuration (/boot/grub/grub.cfg)..."
+            grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null || true
+        fi
+    fi
+
+    # 2. systemd-boot (/boot/loader/entries/*.conf)
+    if [ -d /boot/loader/entries ]; then
+        for entry in /boot/loader/entries/*.conf; do
+            if [ -f "${entry}" ]; then
+                for p in ${params}; do
+                    if grep -q "^options " "${entry}" && ! grep "^options " "${entry}" | grep -q "${p}"; then
+                        sed -i "s/^options \(.*\)/options \1 ${p}/" "${entry}"
+                    fi
+                done
+            fi
+        done
+    fi
+
+    # 3. rEFInd (/boot/refind_linux.conf)
+    if [ -f /boot/refind_linux.conf ]; then
+        for p in ${params}; do
+            if ! grep -q "${p}" /boot/refind_linux.conf; then
+                sed -i "s/\"rw /\"rw ${p} /g" /boot/refind_linux.conf
+            fi
+        done
+    fi
+}
+
 configure_nvidia_mkinitcpio(){
+    echo "Installing NVIDIA Wayland VA-API video acceleration (libva-nvidia-driver, libva-utils)..."
+    pacman -S --needed --noconfirm libva-nvidia-driver libva-utils 2>/dev/null || true
+
+    echo "Configuring NVIDIA DRM KMS, Wayland fbdev and video memory preservation in /etc/modprobe.d/nvidia.conf..."
+    mkdir -p /etc/modprobe.d
+    cat << 'EOF' > /etc/modprobe.d/nvidia.conf
+options nvidia_drm modeset=1 fbdev=1
+options nvidia NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=/var/tmp
+EOF
+
+    echo "Enabling NVIDIA suspend/hibernate/resume and laptop Dynamic Boost services..."
+    for nv_srv in nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service nvidia-powerd.service; do
+        systemctl enable "${nv_srv}" 2>/dev/null || true
+    done
+
+    append_kernel_cmdline "nvidia-drm.modeset=1 nvidia-drm.fbdev=1"
+
     local mkconf="/etc/mkinitcpio.conf"
     if [ -f "${mkconf}" ]; then
         if ! grep -q "nvidia" "${mkconf}"; then
@@ -491,9 +557,9 @@ configure_nvidia_mkinitcpio(){
             else
                 echo "MODULES=(nvme nvidia nvidia_modeset nvidia_uvm nvidia_drm)" >> "${mkconf}"
             fi
-            echo "Regenerating initramfs for NVIDIA early KMS loading..."
-            mkinitcpio -P
         fi
+        echo "Regenerating initramfs for NVIDIA early KMS loading..."
+        mkinitcpio -P
     fi
 }
 
@@ -621,20 +687,20 @@ menu_gpu(){
 
         case ${sel} in
             "hybrid-intel-nvidia")
-                echo "Installing Hybrid Laptop Intel + NVIDIA Open (${nv_open_pkg} + prime-run)..."
+                echo "Installing Hybrid Laptop Intel + NVIDIA Open (${nv_open_pkg} + prime-run + VA-API)..."
                 pacman -S --needed --noconfirm \
                     mesa lib32-mesa \
-                    intel-media-driver \
+                    intel-media-driver libva-intel-driver libva-utils vdpauinfo \
                     vulkan-intel lib32-vulkan-intel \
                     "${nv_open_pkg}" nvidia-utils lib32-nvidia-utils nvidia-settings \
                     nvidia-prime
                 configure_nvidia_mkinitcpio
             ;;
             "hybrid-amd-nvidia")
-                echo "Installing Hybrid Laptop AMD + NVIDIA Open (${nv_open_pkg} + prime-run)..."
+                echo "Installing Hybrid Laptop AMD + NVIDIA Open (${nv_open_pkg} + prime-run + VA-API)..."
                 pacman -S --needed --noconfirm \
                     mesa lib32-mesa \
-                    xf86-video-amdgpu \
+                    xf86-video-amdgpu libva-mesa-driver mesa-vdpau libva-utils \
                     vulkan-radeon lib32-vulkan-radeon \
                     "${nv_open_pkg}" nvidia-utils lib32-nvidia-utils nvidia-settings \
                     nvidia-prime
@@ -652,12 +718,12 @@ menu_gpu(){
                 configure_nvidia_mkinitcpio
             ;;
             "intel")
-                echo "Installing Intel Graphics drivers..."
-                pacman -S --needed --noconfirm mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel
+                echo "Installing Intel Graphics drivers & VA-API video acceleration..."
+                pacman -S --needed --noconfirm mesa lib32-mesa intel-media-driver libva-intel-driver libva-utils vdpauinfo vulkan-intel lib32-vulkan-intel
             ;;
             "amd")
-                echo "Installing AMD Radeon drivers..."
-                pacman -S --needed --noconfirm mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon
+                echo "Installing AMD Radeon drivers & VA-API/VDPAU video acceleration..."
+                pacman -S --needed --noconfirm mesa lib32-mesa xf86-video-amdgpu libva-mesa-driver mesa-vdpau libva-utils vulkan-radeon lib32-vulkan-radeon
             ;;
             "vm")
                 echo "Installing VM guest tools..."
@@ -841,6 +907,10 @@ menu_services(){
     options+=("bluetooth" "Bluetooth support (bluez)" on)
     options+=("cups" "Printing support (CUPS)" on)
     options+=("fstrim" "SSD/NVMe periodic TRIM timer" on)
+    options+=("zram" "ZRAM Swap in RAM (zram-generator, zstd)" on)
+    options+=("paccache" "Pacman cache weekly cleanup timer (pacman-contrib)" on)
+    options+=("flatpak" "Flatpak + Flathub & GUI Software Store integration" on)
+    options+=("snapper" "Btrfs Snapshots (snapper + snap-pac + btrfs-assistant)" off)
     options+=("ufw" "Uncomplicated Firewall" off)
     
     sel=$(dialog --backtitle "${apptitle}" --title "${txtservicestitle}" --checklist "${txtservicesdesc}" 0 0 0 \
@@ -871,6 +941,31 @@ menu_services(){
                 "fstrim")
                     echo "Enabling SSD fstrim.timer..."
                     systemctl enable fstrim.timer
+                ;;
+                "zram")
+                    cachyos_configure_zram
+                ;;
+                "paccache")
+                    echo "Enabling Pacman cache auto-cleanup (paccache.timer)..."
+                    pacman -S --needed --noconfirm pacman-contrib
+                    systemctl enable paccache.timer 2>/dev/null || true
+                ;;
+                "flatpak")
+                    echo "Installing Flatpak and enabling Flathub repository..."
+                    pacman -S --needed --noconfirm flatpak
+                    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+                    if pacman -Q plasma-desktop &>/dev/null; then
+                        pacman -S --needed --noconfirm discover flatpak-kcm 2>/dev/null || true
+                    elif pacman -Q gnome-shell &>/dev/null; then
+                        pacman -S --needed --noconfirm gnome-software 2>/dev/null || true
+                    fi
+                ;;
+                "snapper")
+                    echo "Installing Btrfs Snapshots tooling (snapper, snap-pac, btrfs-assistant)..."
+                    pacman -S --needed --noconfirm snapper snap-pac btrfs-assistant 2>/dev/null || \
+                    pacman -S --needed --noconfirm snapper snap-pac 2>/dev/null || true
+                    systemctl enable snapper-timeline.timer 2>/dev/null || true
+                    systemctl enable snapper-cleanup.timer 2>/dev/null || true
                 ;;
                 "ufw")
                     echo "Enabling Firewall (ufw)..."
@@ -1147,6 +1242,61 @@ EOF
     fi
 }
 
+cachyos_configure_zram(){
+    echo "=== Configuring ZRAM Swap in RAM (zram-generator, zstd, swappiness=180) ==="
+    pacman -S --needed --noconfirm zram-generator
+    mkdir -p /etc/systemd /etc/sysctl.d
+    cat << 'EOF' > /etc/systemd/zram-generator.conf
+[zram0]
+zram-size = ram
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+EOF
+    cat << 'EOF' > /etc/sysctl.d/99-zram.conf
+vm.swappiness = 180
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl start systemd-zram-setup@zram0.service 2>/dev/null || true
+    sysctl -p /etc/sysctl.d/99-zram.conf 2>/dev/null || true
+    echo "ZRAM Swap configured (/etc/systemd/zram-generator.conf & /etc/sysctl.d/99-zram.conf)."
+}
+
+cachyos_install_ananicy(){
+    echo "=== Installing ananicy-cpp & CachyOS Process Priority Rules ==="
+    pacman -S --needed --noconfirm ananicy-cpp cachyos-ananicy-rules 2>/dev/null || \
+    pacman -S --needed --noconfirm ananicy-cpp 2>/dev/null || true
+    systemctl enable --now ananicy-cpp.service 2>/dev/null || true
+}
+
+cachyos_install_scx(){
+    echo "=== Installing Sched-ext BPF CPU Schedulers (scx-scheds: scx_lavd) ==="
+    pacman -S --needed --noconfirm scx-scheds 2>/dev/null || true
+    if [ -f /etc/default/scx ]; then
+        sed -i 's/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/' /etc/default/scx
+    else
+        echo "SCX_SCHEDULER=scx_lavd" > /etc/default/scx
+    fi
+    systemctl enable --now scx.service 2>/dev/null || true
+    echo "Configured scx.service with scx_lavd scheduler."
+}
+
+cachyos_rate_mirrors(){
+    echo "=== Optimizing Repository Mirror Speed ==="
+    if grep -q "\[cachyos" /etc/pacman.conf; then
+        pacman -S --needed --noconfirm cachyos-rate-mirrors 2>/dev/null || true
+        if command -v cachyos-rate-mirrors >/dev/null 2>&1; then
+            cachyos-rate-mirrors
+            return 0
+        fi
+    fi
+    pacman -S --needed --noconfirm reflector
+    reflector --latest 15 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+}
+
 cachyos_optimize_mkinitcpio(){
     local target_root="${1:-}"
     local mkconf="${target_root}/etc/mkinitcpio.conf"
@@ -1167,6 +1317,10 @@ ShowDelay=0
 EOF
     if [ -z "${target_root}" ] && command -v plymouth-set-default-theme >/dev/null 2>&1; then
         plymouth-set-default-theme spinner 2>/dev/null || true
+    fi
+
+    if [ -z "${target_root}" ]; then
+        append_kernel_cmdline "quiet splash"
     fi
 
     echo "=== Configuring ${mkconf} ==="
@@ -1245,6 +1399,10 @@ menu_cachyos(){
     options+=("kernel" "${txtcachyoskernelonly}")
     options+=("schedulers" "${txtcachyosscheduleronly}")
     options+=("sysctl" "${txtcachyossysctlonly}")
+    options+=("zram" "${txtcachyoszramonly}")
+    options+=("ananicy" "${txtcachyosananicyonly}")
+    options+=("scx" "${txtcachyosscxonly}")
+    options+=("mirrors" "${txtcachyosmirrorsonly}")
     options+=("mkinitcpio" "${txtcachyosmkinitcpioonly}")
 
     sel=$(dialog --backtitle "${apptitle}" --title "${txtcachyostitle}" \
@@ -1256,19 +1414,25 @@ menu_cachyos(){
         case ${sel} in
             "full")
                 clear
-                echo "=== Step 1/5: Enabling CachyOS Repository ==="
+                echo "=== Step 1/7: Enabling CachyOS Repository ==="
                 cachyos_enable_repo
                 echo ""
-                echo "=== Step 2/5: Installing linux-cachyos, headers & cachyos-settings ==="
+                echo "=== Step 2/7: Installing linux-cachyos, headers & cachyos-settings ==="
                 cachyos_install_kernel_and_settings
                 echo ""
-                echo "=== Step 3/5: Configuring I/O Schedulers (adios / bfq) ==="
+                echo "=== Step 3/7: Configuring I/O Schedulers (adios / bfq) ==="
                 cachyos_apply_io_schedulers
                 echo ""
-                echo "=== Step 4/5: Configuring Sysctl Tweaks (split-lock & max_map_count) ==="
+                echo "=== Step 4/7: Configuring Sysctl Tweaks (split-lock & max_map_count) ==="
                 cachyos_apply_sysctl_tweaks
                 echo ""
-                echo "=== Step 5/5: Optimizing mkinitcpio & Plymouth spinner ==="
+                echo "=== Step 5/7: Configuring ZRAM Swap in RAM (zstd) ==="
+                cachyos_configure_zram
+                echo ""
+                echo "=== Step 6/7: Installing ananicy-cpp + CachyOS Rules ==="
+                cachyos_install_ananicy
+                echo ""
+                echo "=== Step 7/7: Optimizing mkinitcpio & Plymouth spinner ==="
                 cachyos_optimize_mkinitcpio
                 echo ""
                 pressanykey
@@ -1292,6 +1456,26 @@ menu_cachyos(){
             "sysctl")
                 clear
                 cachyos_apply_sysctl_tweaks
+                pressanykey
+            ;;
+            "zram")
+                clear
+                cachyos_configure_zram
+                pressanykey
+            ;;
+            "ananicy")
+                clear
+                cachyos_install_ananicy
+                pressanykey
+            ;;
+            "scx")
+                clear
+                cachyos_install_scx
+                pressanykey
+            ;;
+            "mirrors")
+                clear
+                cachyos_rate_mirrors
                 pressanykey
             ;;
             "mkinitcpio")
@@ -1366,6 +1550,11 @@ menu_apps(){
     options+=("p7zip" "Archive compression tools" on)
     options+=("unrar" "RAR archive extraction" on)
     options+=("kitty" "GPU-accelerated terminal" off)
+    options+=("steam" "Steam Gaming Platform (Multilib)" off)
+    options+=("lutris" "Lutris Open Gaming Platform" off)
+    options+=("mangohud" "MangoHud & GOverlay (FPS/GPU/CPU OSD)" off)
+    options+=("gamemode" "Feral GameMode (CPU/GPU Gaming Booster)" off)
+    options+=("proton-cachyos" "Proton-CachyOS (CachyOS Gaming Wine/Proton)" off)
     
     sel=$(dialog --backtitle "${apptitle}" --title "${txtappstitle}" --checklist "${txtappsdesc}" 0 0 0 \
         "${options[@]}" \
@@ -1390,6 +1579,19 @@ menu_apps(){
                 ;;
                 "vivaldi")
                     pacman_pkgs="${pacman_pkgs} vivaldi vivaldi-ffmpeg-codecs"
+                ;;
+                "mangohud")
+                    pacman_pkgs="${pacman_pkgs} mangohud lib32-mangohud goverlay"
+                ;;
+                "gamemode")
+                    pacman_pkgs="${pacman_pkgs} gamemode lib32-gamemode"
+                ;;
+                "proton-cachyos")
+                    if pacman -Si proton-cachyos &>/dev/null; then
+                        pacman_pkgs="${pacman_pkgs} proton-cachyos"
+                    else
+                        aur_pkgs="${aur_pkgs} proton-cachyos-bin"
+                    fi
                 ;;
                 *)
                     pacman_pkgs="${pacman_pkgs} ${clean_pkg}"
@@ -1469,6 +1671,7 @@ mainmenu(){
             3>&1 1>&2 2>&3)
             
         if [ "$?" != "0" ]; then
+            rm -f /etc/sudoers.d/99-installer-temp /root/archfi 2>/dev/null || true
             clear
             break
         fi
@@ -1488,6 +1691,7 @@ mainmenu(){
             "12") menu_aur; default_item="13";;
             "13")
                 if dialog --backtitle "${apptitle}" --title "${txtreboot}" --yesno "${txtreboot} ?" 0 0; then
+                    rm -f /etc/sudoers.d/99-installer-temp /root/archfi 2>/dev/null || true
                     clear
                     reboot
                     break

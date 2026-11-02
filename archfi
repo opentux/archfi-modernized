@@ -19,7 +19,8 @@ cpl=0
 skipfont="0"
 fspkgs=""
 btrfs_root_subvols=0
-btrfs_opts="rw,noatime,commit=120,space_cache=v2,compress=zstd:1"
+btrfs_has_snapshots=1
+btrfs_opts="rw,noatime,ssd,commit=120,space_cache=v2,compress=zstd:1"
 btrfs_opts_configured=0
 chosen_kernel=""
 
@@ -42,7 +43,7 @@ choose_btrfs_mount_opts(){
 		"${options_btrfs_opts[@]}" \
 		3>&1 1>&2 2>&3)
 	if [ "$?" = "0" ]; then
-		btrfs_opts="rw,noatime,commit=120,space_cache=v2"
+		btrfs_opts="rw,noatime,ssd,commit=120,space_cache=v2"
 		for opt in ${sel_btrfs_opts}; do
 			clean_opt=$(echo ${opt} | sed 's/"//g')
 			btrfs_opts="${btrfs_opts},${clean_opt}"
@@ -667,7 +668,13 @@ formatdevice(){
 			choose_btrfs_mount_opts
 			if [ "${1}" = "root" ]; then
 				options_btrfs=()
-				options_btrfs+=("subvolumes" "${txtbtrfssubvols}")
+				if [[ "${btrfs_opts}" == *"nodatacow"* ]]; then
+					options_btrfs+=("subvolumes_nosnap" "${txtbtrfssubvolsnosnap}")
+					options_btrfs+=("subvolumes" "${txtbtrfssubvols}")
+				else
+					options_btrfs+=("subvolumes" "${txtbtrfssubvols}")
+					options_btrfs+=("subvolumes_nosnap" "${txtbtrfssubvolsnosnap}")
+				fi
 				options_btrfs+=("simple" "${txtbtrfssimple}")
 				btrfs_choice=$(dialog --backtitle "${apptitle}" --title "${txtbtrfslayout}" --menu "${txtbtrfsconfirm//%1/${2}}" 0 0 0 \
 					"${options_btrfs[@]}" \
@@ -682,6 +689,17 @@ formatdevice(){
 					btrfs subvolume create /mnt/@pkg
 					umount /mnt
 					btrfs_root_subvols=1
+					btrfs_has_snapshots=1
+				elif [ "${btrfs_choice}" = "subvolumes_nosnap" ]; then
+					echo "Creating Btrfs subvolumes layout without snapshots (@, @home, @var_log, @pkg)..."
+					mount ${2} /mnt
+					btrfs subvolume create /mnt/@
+					btrfs subvolume create /mnt/@home
+					btrfs subvolume create /mnt/@var_log
+					btrfs subvolume create /mnt/@pkg
+					umount /mnt
+					btrfs_root_subvols=1
+					btrfs_has_snapshots=0
 				else
 					echo "mount ${2} /mnt"
 					echo "btrfs subvolume create /mnt/root"
@@ -692,6 +710,7 @@ formatdevice(){
 					btrfs subvolume set-default /mnt/root
 					umount /mnt
 					btrfs_root_subvols=0
+					btrfs_has_snapshots=0
 				fi
 			fi
 		;;
@@ -795,6 +814,11 @@ mountparts(){
 		mount ${rootdev} /mnt 2>/dev/null
 		if [ -d "/mnt/@" ]; then
 			btrfs_root_subvols=1
+			if [ -d "/mnt/@snapshots" ]; then
+				btrfs_has_snapshots=1
+			else
+				btrfs_has_snapshots=0
+			fi
 		fi
 		umount /mnt 2>/dev/null
 		if [ "${btrfs_opts_configured}" != "1" ]; then
@@ -805,13 +829,16 @@ mountparts(){
 	if [ "${btrfs_root_subvols}" = "1" ]; then
 		echo "mount -o ${btrfs_opts},subvol=@ ${rootdev} /mnt"
 		mount -o ${btrfs_opts},subvol=@ ${rootdev} /mnt
-		mkdir -p /mnt/{boot,home,.snapshots,var/log,var/cache/pacman/pkg}
+		mkdir -p /mnt/{boot,home,var/log,var/cache/pacman/pkg}
 		if [ -z "${homedev}" ]; then
 			echo "mount -o ${btrfs_opts},subvol=@home ${rootdev} /mnt/home"
 			mount -o ${btrfs_opts},subvol=@home ${rootdev} /mnt/home
 		fi
-		echo "mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots"
-		mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots
+		if [ "${btrfs_has_snapshots}" = "1" ]; then
+			mkdir -p /mnt/.snapshots
+			echo "mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots"
+			mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots
+		fi
 		echo "mount -o ${btrfs_opts},subvol=@var_log ${rootdev} /mnt/var/log"
 		mount -o ${btrfs_opts},subvol=@var_log ${rootdev} /mnt/var/log
 		echo "mount -o ${btrfs_opts},subvol=@pkg ${rootdev} /mnt/var/cache/pacman/pkg"
@@ -1126,12 +1153,18 @@ installbase(){
 		amd_state="on"
 	fi
 
+	local zram_state="off"
+	if [ -z "${swapdev}" ]; then
+		zram_state="on"
+	fi
+
 	options=()
 	options+=("${chosen_kernel}-headers" "Kernel Headers (${chosen_kernel})" on)
 	options+=("dkms" "Dynamic Kernel Module Support (DKMS)" on)
 	options+=("linux-firmware" "(${txtoptional})" on)
 	options+=("intel-ucode" "Intel CPU Microcode" ${intel_state})
 	options+=("amd-ucode" "AMD CPU Microcode" ${amd_state})
+	options+=("zram-generator" "ZRAM Swap in RAM (zstd, swappiness=180)" ${zram_state})
 	options+=("sof-firmware" "Sound Open Firmware" off)
 	if [ "${chosen_kernel}" = "linux-cachyos" ] || grep -q "\[cachyos\]" /etc/pacman.conf; then
 		options+=("cachyos-settings" "CachyOS System Settings & Tweaks" on)
@@ -1232,6 +1265,24 @@ installbase(){
 		arch-chroot /mnt pacman-key --populate cachyos 2>/dev/null || true
 	fi	
 
+	if [[ "${pkgs}" == *"zram-generator"* ]]; then
+		echo "Configuring ZRAM Swap in RAM (/mnt/etc/systemd/zram-generator.conf & 99-zram.conf)..."
+		mkdir -p /mnt/etc/systemd /mnt/etc/sysctl.d
+		cat << 'EOF' > /mnt/etc/systemd/zram-generator.conf
+[zram0]
+zram-size = ram
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+EOF
+		cat << 'EOF' > /mnt/etc/sysctl.d/99-zram.conf
+vm.swappiness = 180
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+EOF
+	fi
+
 	echo "Enabling NetworkManager service in /mnt..."
 	arch-chroot /mnt systemctl enable NetworkManager.service 2>/dev/null || true
 
@@ -1262,6 +1313,7 @@ EOF
 
 unmountdevices(){
 	clear
+	rm -rf /mnt/root/archfi /mnt/root/lng /mnt/etc/sudoers.d/99-installer-temp 2>/dev/null || true
 	echo "umount -R /mnt"
 	umount -R /mnt
 	if [ ! "${swapdev}" = "" ]; then
@@ -1800,11 +1852,43 @@ archgenmkinitcpionvme(){
 	pressanykey
 }
 
+archconfigurezram(){
+	echo "Installing and configuring ZRAM Swap in RAM (zram-generator, zstd)..."
+	pacstrap /mnt zram-generator
+	mkdir -p /mnt/etc/systemd /mnt/etc/sysctl.d
+	cat << 'EOF' > /mnt/etc/systemd/zram-generator.conf
+[zram0]
+zram-size = ram
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+EOF
+	cat << 'EOF' > /mnt/etc/sysctl.d/99-zram.conf
+vm.swappiness = 180
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+EOF
+	echo "Saved /mnt/etc/systemd/zram-generator.conf and /mnt/etc/sysctl.d/99-zram.conf"
+}
+
+get_extra_kernel_params(){
+	local extra_params=""
+	if [ -f "/mnt/etc/mkinitcpio.conf" ] && grep -q "plymouth" /mnt/etc/mkinitcpio.conf; then
+		extra_params="quiet splash"
+	fi
+	if [ -d "/mnt/usr/lib/modules" ] && find /mnt/usr/lib/modules -name "nvidia.ko*" 2>/dev/null | grep -q "nvidia"; then
+		extra_params="${extra_params} nvidia-drm.modeset=1 nvidia-drm.fbdev=1"
+	fi
+	echo "${extra_params}" | sed 's/^ *//;s/ *$//'
+}
+
 archcachyostweaksmenu(){
 	options=()
-	options+=("full" "Full Tweaks (adios + sysctl + mkinitcpio/Plymouth - Recommended)")
+	options+=("full" "Full Tweaks (adios + sysctl + ZRAM + mkinitcpio/Plymouth - Recommended)")
 	options+=("schedulers" "I/O Schedulers rule (adios on SSD/NVMe, bfq on HDD)")
 	options+=("sysctl" "Sysctl Tweaks (split_lock_mitigate=0, max_map_count)")
+	options+=("zram" "ZRAM Swap in RAM (zram-generator, zstd, swappiness=180)")
 	options+=("mkinitcpio" "Optimize mkinitcpio (lz4, nvme/nvidia, Plymouth spinner)")
 
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtcachyostweaks}" \
@@ -1816,7 +1900,7 @@ archcachyostweaksmenu(){
 		case ${sel} in
 			"full")
 				clear
-				echo "=== 1/3: Configuring I/O Schedulers (adios / bfq) ==="
+				echo "=== 1/4: Configuring I/O Schedulers (adios / bfq) ==="
 				mkdir -p /mnt/etc/udev/rules.d
 				cat << 'EOF' > /mnt/etc/udev/rules.d/60-ioschedulers.rules
 # HDD
@@ -1833,7 +1917,7 @@ ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/rotational}=="0", \
 EOF
 				echo "Saved /mnt/etc/udev/rules.d/60-ioschedulers.rules"
 				echo ""
-				echo "=== 2/3: Configuring Sysctl Tweaks ==="
+				echo "=== 2/4: Configuring Sysctl Tweaks ==="
 				mkdir -p /mnt/etc/sysctl.d
 				cat << 'EOF' > /mnt/etc/sysctl.d/99-splitlock.conf
 kernel.split_lock_mitigate=0
@@ -1841,7 +1925,10 @@ vm.max_map_count = 2147483642
 EOF
 				echo "Saved /mnt/etc/sysctl.d/99-splitlock.conf"
 				echo ""
-				echo "=== 3/3: Optimizing mkinitcpio & Plymouth spinner ==="
+				echo "=== 3/4: Configuring ZRAM Swap in RAM ==="
+				archconfigurezram
+				echo ""
+				echo "=== 4/4: Optimizing mkinitcpio & Plymouth spinner ==="
 				archcachyosmkinitcpio
 				echo ""
 				pressanykey
@@ -1875,6 +1962,11 @@ kernel.split_lock_mitigate=0
 vm.max_map_count = 2147483642
 EOF
 				echo "Saved /mnt/etc/sysctl.d/99-splitlock.conf"
+				pressanykey
+			;;
+			"zram")
+				clear
+				archconfigurezram
 				pressanykey
 			;;
 			"mkinitcpio")
@@ -2005,6 +2097,7 @@ archbootloadergrubmenu(){
 		nextblitem=${1}
 	fi
 	options=()
+	options+=("Express" "Auto-Install (grub + efibootmgr + grub-install + grub-mkconfig)")
 	options+=("${txtinstall//%1/grub}" "pacstrap grub (efibootmgr), grub-mkconfig")
 	options+=("${txtedit//%1/grub}" "(${txtoptional})")
 	options+=("${txtinstall//%1/bootloader}" "grub-install")
@@ -2013,6 +2106,10 @@ archbootloadergrubmenu(){
 		3>&1 1>&2 2>&3)
 	if [ "$?" = "0" ]; then
 		case ${sel} in
+			"Express")
+				archgrubexpressinstall
+				return 0
+			;;
 			"${txtinstall//%1/grub}")
 				archgrubinstall
 				nextblitem="${txtinstall//%1/bootloader}"
@@ -2032,6 +2129,48 @@ archbootloadergrubmenu(){
 			;;
 		esac
 		archbootloadergrubmenu "${nextblitem}"
+	fi
+}
+
+archgrubconfigurecmdline(){
+	local grub_def="/mnt/etc/default/grub"
+	if [ -f "${grub_def}" ]; then
+		local extra_kparams
+		extra_kparams=$(get_extra_kernel_params)
+		if [ -n "${extra_kparams}" ]; then
+			for kp in ${extra_kparams}; do
+				if ! grep "^GRUB_CMDLINE_LINUX_DEFAULT=" "${grub_def}" | grep -q "${kp}"; then
+					sed -i "s/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 ${kp}\"/" "${grub_def}"
+					sed -i 's/  */ /g' "${grub_def}"
+				fi
+			done
+		fi
+		if [ "${luksroot}" = "1" ] && [ -n "${luksrootuuid}" ]; then
+			sed -i "/^GRUB_CMDLINE_LINUX=/c\GRUB_CMDLINE_LINUX=\"rd.luks.name=${luksrootuuid}=root cryptdevice=UUID=${luksrootuuid}:root\"" "${grub_def}"
+		fi
+	fi
+}
+
+archgrubexpressinstall(){
+	device=$( selectdisk "${txtinstall//%1/bootloader}" )
+	if [ "$?" = "0" ]; then
+		clear
+		local grub_pkgs="grub"
+		if [ "${eficomputer}" == "1" ]; then
+			grub_pkgs="grub efibootmgr"
+		fi
+		echo "pacstrap /mnt ${grub_pkgs}"
+		pacstrap /mnt ${grub_pkgs}
+		archgrubconfigurecmdline
+		if [ "${eficomputer}" == "1" ] && [ "${efimode}" = "1" ]; then
+			archchroot grubbootloaderefiinstall ${device}
+		elif [ "${eficomputer}" == "1" ] && [ "${efimode}" = "2" ]; then
+			archchroot grubbootloaderefiusbinstall ${device}
+		else
+			archchroot grubbootloaderinstall ${device}
+		fi
+		archchroot grubinstall
+		pressanykey
 	fi
 }
 
@@ -2059,11 +2198,13 @@ archgrubinstall(){
 		fi
 	fi
 
+	archgrubconfigurecmdline
+
 	if [ "${luksroot}" = "1" ]; then
 		if (dialog --backtitle "${apptitle}" --title "${txtinstall//%1/grub}" --yesno "${txtgrubluksdetected}" 0 0) then
 			clear
-			echo "sed -i /GRUB_CMDLINE_LINUX=/c\GRUB_CMDLINE_LINUX=\\\"cryptdevice=/dev/disk/by-uuid/${luksrootuuid}:root\\\" /mnt/etc/default/grub"
-			sed -i /GRUB_CMDLINE_LINUX=/c\GRUB_CMDLINE_LINUX=\"cryptdevice=/dev/disk/by-uuid/${luksrootuuid}:root\" /mnt/etc/default/grub
+			echo "sed -i /GRUB_CMDLINE_LINUX=/c\GRUB_CMDLINE_LINUX=\\\"rd.luks.name=${luksrootuuid}=root cryptdevice=/dev/disk/by-uuid/${luksrootuuid}:root\\\" /mnt/etc/default/grub"
+			sed -i /GRUB_CMDLINE_LINUX=/c\GRUB_CMDLINE_LINUX=\"rd.luks.name=${luksrootuuid}=root\ cryptdevice=/dev/disk/by-uuid/${luksrootuuid}:root\" /mnt/etc/default/grub
 			pressanykey
 		fi
 	fi
@@ -2321,13 +2462,19 @@ EOF
 	bootoptions="rw"
 	if [ "${luksroot}" = "1" ]; then
 		cryptuuid=$(blkid -s UUID -o value ${realrootdev} 2>/dev/null)
-		bootoptions="cryptdevice=UUID=${cryptuuid}:root root=/dev/mapper/root ${bootoptions}"
+		bootoptions="rd.luks.name=${cryptuuid}=root cryptdevice=UUID=${cryptuuid}:root root=/dev/mapper/root ${bootoptions}"
 	else
 		bootoptions="root=PARTUUID=${partuuid} ${bootoptions}"
 	fi
 
 	if [ "${btrfs_root_subvols}" = "1" ]; then
 		bootoptions="${bootoptions} rootflags=subvol=@"
+	fi
+
+	local extra_kparams
+	extra_kparams=$(get_extra_kernel_params)
+	if [ -n "${extra_kparams}" ]; then
+		bootoptions="${bootoptions} ${extra_kparams}"
 	fi
 
 	echo "Creating /mnt/boot/loader/entries/arch.conf..."
@@ -2423,13 +2570,19 @@ archrefindinstall(){
 	refind_opts="rw add_efi_memmap"
 	if [ "${luksroot}" = "1" ]; then
 		cryptuuid=$(blkid -s UUID -o value ${realrootdev} 2>/dev/null)
-		refind_opts="cryptdevice=UUID=${cryptuuid}:root root=/dev/mapper/root ${refind_opts}"
+		refind_opts="rd.luks.name=${cryptuuid}=root cryptdevice=UUID=${cryptuuid}:root root=/dev/mapper/root ${refind_opts}"
 	else
 		refind_opts="root=UUID=${rootuuid} ${refind_opts}"
 	fi
 
 	if [ "${btrfs_root_subvols}" = "1" ]; then
 		refind_opts="${refind_opts} rootflags=subvol=@"
+	fi
+
+	local extra_kparams
+	extra_kparams=$(get_extra_kernel_params)
+	if [ -n "${extra_kparams}" ]; then
+		refind_opts="${refind_opts} ${extra_kparams}"
 	fi
 
 	ucode_param=""
@@ -2741,6 +2894,7 @@ loadstrings(){
 
 	txtbtrfslayout="Btrfs Layout"
 	txtbtrfssubvols="Subvolumes (@, @home, @snapshots, @var_log, @pkg)"
+	txtbtrfssubvolsnosnap="Subvolumes without snapshots (@, @home, @var_log, @pkg - Lab / nodatacow)"
 	txtbtrfssimple="Simple (@root subvolume)"
 	txtbtrfsconfirm="Configure Btrfs layout for %1 :"
 	txtbtrfsmountopts="Btrfs Mount Options"
