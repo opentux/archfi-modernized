@@ -28,10 +28,17 @@ Le projet regroupe et modernise les deux scripts historiques dans une même arbo
 - **Menu de formatage clarifié** : Séparation stricte entre le formatage de la partition BOOT/EFI (obligatoirement en FAT32 sous UEFI) et de la partition ROOT (accès direct à Btrfs, Ext4, XFS, F2FS avec descriptions claires), avec arrêt propre en cas d'annulation.
 - **Options Btrfs optimisées** : Montage par défaut moderne (`rw,noatime,commit=120,space_cache=v2,compress=zstd:1`) et support revu des sous-volumes (`@`, `@home`, `@snapshots`, etc.).
 - **Pacman QoL** : Activation de `ParallelDownloads`, de la couleur et du `ILoveCandy`.
-- **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap.
+- **Réseau & Wi-Fi clé en main** : Intégration et activation automatique de `NetworkManager.service` et `iwd` dès l'installation de base et lors du déploiement des bureaux, garantissant le bon fonctionnement immédiat de l'applet réseau et du Wi-Fi.
+- **Noyaux, En-têtes & DKMS** : Choix du noyau avec installation intégrée des headers correspondants (`linux-headers`, `linux-lts-headers`, etc.) et de `dkms` dès l'étape pacstrap. Support du noyau ultra-performant **`linux-cachyos`** avec activation sécurisée des dépôts CachyOS (mode sans surcharge RAM en live boot, détection CPU v3/v4).
+- **Optimisations CachyOS & Tweaks Système** :
+  - Configuration interactive des règles I/O Schedulers udev (scheduler **`adios`** pour SSD/NVMe et `bfq` pour HDD).
+  - Tweaks sysctl (`kernel.split_lock_mitigate=0`, `vm.max_map_count = 2147483642`).
+  - Optimisation avancée de `mkinitcpio.conf` (modules NVMe + NVIDIA après installation des pilotes, compression ultra-rapide `lz4`, Plymouth avec thème `spinner`).
 - **Création d'utilisateur & Sudoers propre** : Menu dédié à la création d'un compte utilisateur standard directement depuis `archfi`, avec ajout au groupe `wheel` et option pour créer un fichier nominatif sans mot de passe (`NOPASSWD`) dans `/etc/sudoers.d/<nomduuser>` (droits 0440).
-
-- **Disposition clavier universelle (Console, X11, Wayland)** : Configuration automatique de la disposition clavier (AZERTY `fr`) pour la console (`vconsole.conf`), les sessions graphiques (`/etc/X11/xorg.conf.d/00-keyboard.conf`) et KDE Plasma (`/etc/xdg/kxkbrc`).
+- **Internationalisation & Français intégral (Console, X11, Wayland, Plasma & Apps)** :
+  - Configuration complète de la locale système (`fr_FR.UTF-8 UTF-8` dans `locale.gen` et `locale.conf`).
+  - Configuration native de **KDE Plasma 6** en Français via `/etc/xdg/plasma-localerc` (`LANGUAGE=fr_FR:fr`).
+  - Installation automatique des packs de langue française pour les applications (`firefox-i18n-fr`, `libreoffice-fresh-fr`, `hunspell-fr`).
  
 - **Traductions épurées** : Maintenance ciblée uniquement sur le Français et l'Anglais (suppression des fichiers de langues orphelins).
 
@@ -50,6 +57,18 @@ Un gros travail d'actualisation a déjà été effectué pour adapter le script 
   - Détection automatique du/des noyau(x) installé(s) et installation transparente des headers et de `dkms`.
   - Résolution des conflits d'énergie : arrêt et masquage automatique (`systemctl mask`) des services concurrents (`power-profiles-daemon`, `tuned`, `tuned-ppd`, `tlp`, `auto-cpufreq`) pour confier la gestion exclusive à `tccd.service` (TUXEDO Control Center), avec option de restauration.
 
+- **Pack CachyOS, Kernel, Schedulers & Optimisations Système** :
+  - **Dépôt officiel CachyOS** : déploiement automatique avec détection d'architecture CPU (x86-64-v3, x86-64-v4, standard) et clés de confiance GPG.
+  - **Noyau CachyOS & Settings** : installation de `linux-cachyos`, `linux-cachyos-headers` et `cachyos-settings`.
+  - **Scheduler I/O `adios`** : règle udev dédiée `/etc/udev/rules.d/60-ioschedulers.rules` appliquant le scheduler `adios` pour SSD et NVMe, et `bfq` pour disques HDD.
+  - **Tweaks Sysctl** : fichier `/etc/sysctl.d/99-splitlock.conf` (`kernel.split_lock_mitigate=0` anti-stutter et `vm.max_map_count = 2147483642` pour les jeux Steam/Proton/Unreal Engine).
+  - **mkinitcpio & Boot Splash Plymouth** :
+    - Injection automatique de `nvme` et des modules NVIDIA propriétaires/open (`nvidia`, `nvidia_modeset`, `nvidia_uvm`, `nvidia_drm`).
+    - Intégration de Plymouth avec le thème moderne **`spinner`**.
+    - Hooks modernes (`systemd autodetect microcode modconf kms block filesystems plymouth`).
+    - Compression haute vitesse `lz4` (`COMPRESSION="lz4"`, `COMPRESSION_OPTIONS=(-1)`, `MODULES_DECOMPRESS="yes"`).
+  - Possibilité de lancer le pack complet tout-en-un ou de choisir chaque composant individuellement.
+
 - **Environnements de bureau modernes** : Prise en charge de **KDE Plasma 6** (avec Wayland et session moderne) et **GNOME** (générations récentes / GNOME 5x).
 - **Dépôts Multilib & Tweaks Pacman** : Menu dédié pour activer d'un clic le dépôt `[multilib]` (essentiel pour le jeu/Steam et la compatibilité 32-bit), avec 10 téléchargements parallèles et `ILoveCandy`.
 - **Pilotes GPU récents & Graphiques Hybrides (Optimus / Switch MUX)** :
@@ -57,11 +76,12 @@ Un gros travail d'actualisation a déjà été effectué pour adapter le script 
   - **Détection dynamique des noyaux pour NVIDIA Open** : si un noyau alternatif est détecté (`linux-zen`, `linux-lts`, `linux-hardened`), le script installe automatiquement **`nvidia-open-dkms`** avec ses en-têtes associés, empêchant `pacman` de forcer l'installation du noyau `linux` standard.
   - Pilotes AMD Radeon, Intel Graphics et NVIDIA Propriétaire (`nvidia-dkms`) disponibles pour toutes configurations.
 - **Audio moderne** : Intégration de la stack moderne **PipeWire** (avec `pipewire-pulse`, `wireplumber`) en remplacement du vieux PulseAudio.
-- **Boîte à outils système au choix** : Sélection interactive d'outils CLI et utilitaires de surveillance modernes :
-  - `nvtop` (monitoring GPU en temps réel pour AMD/Intel/NVIDIA),
-  - `inxi` (informations système complètes),
-  - `nmon` (analyse des performances système),
-  - `btop` & `fastfetch` (moniteurs et afficheurs système modernes).
+- **Boîte à outils & Applications Populaires** : Sélection interactive enrichie :
+  - **Navigateurs Web** : Firefox (avec pack de langue français automatique `firefox-i18n-fr`), Google Chrome (dépôt CachyOS / AUR), Vivaldi (avec codecs multimédia), Chromium.
+  - **Gestionnaire de mots de passe** : Bitwarden.
+  - **Multimédia** : VLC, SMPlayer (avec thèmes et skins), MPV.
+  - **Monitoring & Outils CLI** : `btop`, `htop`, `fastfetch` (intégré et configuré dans `.bashrc` pour s'exécuter automatiquement à l'ouverture de chaque terminal interactif), `nvtop` (monitoring GPU en temps réel), `inxi`, `nmon`.
+  - **Archives** : `p7zip`, `unrar`.
 
 ---
 
@@ -75,9 +95,6 @@ Même si une bonne partie du décrassage est faite, il reste du pain sur la plan
 - **Nettoyage du code shell** : Poursuivre la simplification et l'unification du code entre les deux scripts.
 
 ### Idées & réflexions futures
-- **Tuning de performances (façon CachyOS ou équivalent)** :
-  - Explorations autour de tweaks système / kernel / sysctl pour maximiser la réactivité.
-  - *Réflexion sur les dépôts & noyaux CachyOS* : Les gains aux tests sont indéniables, mais la question se pose sur l'intégration. Si c'est pour faire du bricolage dans le script, autant laisser l'utilisateur l'ajouter proprement après coup. Je cherche la manière la plus propre et modulaire de l'amener, sinon cela restera optionnel/externe.
 - **Pack "Gaming" clé en main** :
   - Option d'installation regroupant l'écosystème gaming standard (Steam, GameMode, MangoHud, dépendances Vulkan/Wine, Proton-GE, etc.).
 - **Virtualisation / Hyperviseurs Type 2** :

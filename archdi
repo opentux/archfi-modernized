@@ -42,6 +42,7 @@ load_strings_en(){
     txtfontsmenu="System Fonts"
     txtservicesmenu="System Services (Bluetooth, CUPS, Trim)"
     txttuxedomenu="TUXEDO Laptop (Drivers DKMS, TCC & Power Mgmt)"
+    txtcachyosmenu="CachyOS Kernel, adios Scheduler & Tweaks"
     txtappsmenu="Popular Applications"
     txtaurmenu="AUR Helper (yay)"
     txtreboot="Reboot System"
@@ -105,6 +106,16 @@ load_strings_en(){
     txttuxedosuccess="TUXEDO configuration complete!\n\nConflicting services (power-profiles-daemon, tuned, tuned-ppd, tlp) have been masked and tccd.service is enabled.\n\nPlease reboot your system to load the kernel modules."
     txttuxedorestoresuccess="Default power management restored!\n\npower-profiles-daemon has been unmasked and tccd.service disabled."
     txtuserrequired="Please create a standard user first (Option 3 in main menu) to build AUR packages!"
+
+    txtcachyostitle="CachyOS Repository, Kernel & System Tweaks"
+    txtcachyosdesc="Select CachyOS / Performance option:"
+    txtcachyosfull="Full CachyOS Suite (Repo + Kernel + adios + sysctl + mkinitcpio/Plymouth - Recommended)"
+    txtcachyosrepoonly="Enable CachyOS Repository only (v3/v4 CPU auto-detection)"
+    txtcachyoskernelonly="Install CachyOS Kernel & Settings (linux-cachyos, headers, cachyos-settings)"
+    txtcachyosscheduleronly="Configure I/O Schedulers rule (adios on SSD/NVMe, bfq on HDD)"
+    txtcachyossysctlonly="Configure Sysctl Tweaks (split_lock_mitigate=0, max_map_count)"
+    txtcachyosmkinitcpioonly="Optimize mkinitcpio (lz4, nvme/nvidia, Plymouth spinner, rebuild)"
+    txtcachyossuccess="CachyOS and System Optimizations applied successfully!"
 }
 
 load_strings_fr(){
@@ -126,6 +137,7 @@ load_strings_fr(){
     txtfontsmenu="Polices de Caractères"
     txtservicesmenu="Services Système (Bluetooth, CUPS, Trim)"
     txttuxedomenu="PC Portables TUXEDO (Pilotes DKMS, TCC & Énergie)"
+    txtcachyosmenu="Noyau CachyOS, Scheduler adios & Optimisations"
     txtappsmenu="Applications Populaires"
     txtaurmenu="Gestionnaire AUR (yay)"
     txtreboot="Redémarrer le Système"
@@ -189,6 +201,16 @@ load_strings_fr(){
     txttuxedosuccess="Configuration TUXEDO terminée avec succès !\n\nLes services en conflit (power-profiles-daemon, tuned, tuned-ppd, tlp) ont été masqués et tccd.service est activé.\n\nVeuillez redémarrer le système pour charger les modules du noyau."
     txttuxedorestoresuccess="Gestion d'énergie par défaut restaurée !\n\npower-profiles-daemon a été démasqué et tccd.service désactivé."
     txtuserrequired="Veuillez d'abord créer un utilisateur standard (Option 3 du menu principal) pour compiler les paquets AUR !"
+
+    txtcachyostitle="Dépôt CachyOS, Noyau & Optimisations Système"
+    txtcachyosdesc="Sélectionnez l'option CachyOS / Optimisation :"
+    txtcachyosfull="Pack Complet CachyOS (Dépôt + Noyau + adios + sysctl + mkinitcpio/Plymouth - Recommandé)"
+    txtcachyosrepoonly="Activer le dépôt CachyOS uniquement (détection CPU v3/v4)"
+    txtcachyoskernelonly="Installer le noyau CachyOS & Settings (linux-cachyos, headers, cachyos-settings)"
+    txtcachyosscheduleronly="Configurer les règles I/O Schedulers (adios sur SSD/NVMe, bfq sur HDD)"
+    txtcachyossysctlonly="Configurer les optimisations Sysctl (split_lock_mitigate=0, max_map_count)"
+    txtcachyosmkinitcpioonly="Optimiser mkinitcpio (lz4, nvme/nvidia, Plymouth spinner, regénération)"
+    txtcachyossuccess="Optimisations CachyOS et système appliquées avec succès !"
 }
 
 # Auto-detect language
@@ -307,15 +329,17 @@ menu_user(){
             echo "${username} ALL=(ALL:ALL) NOPASSWD: ALL" > "/etc/sudoers.d/${username}"
             chmod 0440 "/etc/sudoers.d/${username}"
             echo "Configured /etc/sudoers.d/${username} with NOPASSWD: ALL"
-<<<<<<< HEAD
-=======
         fi
 
         if [ -f /etc/xdg/kxkbrc ]; then
             mkdir -p "/home/${username}/.config"
             cp /etc/xdg/kxkbrc "/home/${username}/.config/kxkbrc"
             chown -R "${username}" "/home/${username}/.config" 2>/dev/null || true
->>>>>>> 1a6be0a (correction/gestion locale clavier wayland)
+        fi
+        if [ -f /etc/xdg/plasma-localerc ]; then
+            mkdir -p "/home/${username}/.config"
+            cp /etc/xdg/plasma-localerc "/home/${username}/.config/plasma-localerc"
+            chown -R "${username}" "/home/${username}/.config" 2>/dev/null || true
         fi
         
         dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
@@ -408,6 +432,71 @@ EOF
     dconf update 2>/dev/null || true
 }
 
+configure_system_locale(){
+    local sys_lang="${lang:-en}"
+    if [ -f /etc/locale.conf ] && grep -qi "LANG=.*fr" /etc/locale.conf; then
+        sys_lang="fr"
+    elif [[ "$LANG" =~ ^fr ]]; then
+        sys_lang="fr"
+    fi
+
+    if [ "${sys_lang}" = "fr" ]; then
+        echo "Configuring French system locale, Plasma translations and spell-checker..."
+        # 1. /etc/locale.gen
+        if [ -f /etc/locale.gen ]; then
+            sed -i 's/^#\(fr_FR.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+            sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+            locale-gen 2>/dev/null || true
+        fi
+
+        # 2. /etc/locale.conf
+        cat << 'EOF' > /etc/locale.conf
+LANG=fr_FR.UTF-8
+LC_COLLATE=C
+EOF
+        export LANG=fr_FR.UTF-8
+
+        # 3. KDE Plasma 6 French translations in /etc/xdg/plasma-localerc
+        mkdir -p /etc/xdg /etc/skel/.config
+        cat << 'EOF' > /etc/xdg/plasma-localerc
+[Formats]
+LANG=fr_FR.UTF-8
+
+[Translations]
+LANGUAGE=fr_FR:fr
+EOF
+        cp /etc/xdg/plasma-localerc /etc/skel/.config/plasma-localerc 2>/dev/null || true
+        for udir in /home/*; do
+            if [ -d "${udir}" ]; then
+                local u=$(basename "${udir}")
+                mkdir -p "${udir}/.config"
+                cp /etc/xdg/plasma-localerc "${udir}/.config/plasma-localerc"
+                chown -R "${u}" "${udir}/.config" 2>/dev/null || true
+            fi
+        done
+
+        # 4. French dictionaries and tools
+        pacman -S --needed --noconfirm hunspell-fr 2>/dev/null || true
+    fi
+}
+
+configure_nvidia_mkinitcpio(){
+    local mkconf="/etc/mkinitcpio.conf"
+    if [ -f "${mkconf}" ]; then
+        if ! grep -q "nvidia" "${mkconf}"; then
+            echo "Adding NVIDIA modules to ${mkconf}..."
+            if grep -q "^MODULES=" "${mkconf}"; then
+                sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' "${mkconf}"
+                sed -i 's/  */ /g' "${mkconf}"
+            else
+                echo "MODULES=(nvme nvidia nvidia_modeset nvidia_uvm nvidia_drm)" >> "${mkconf}"
+            fi
+            echo "Regenerating initramfs for NVIDIA early KMS loading..."
+            mkinitcpio -P
+        fi
+    fi
+}
+
 # --------------------------------------------------------
 # Helpers: AUR & Kernel DKMS
 # --------------------------------------------------------
@@ -423,7 +512,7 @@ check_regular_user(){
 install_kernel_headers_and_dkms(){
     echo "Checking and installing DKMS and matching kernel headers..."
     local headers_pkgs="dkms"
-    for k in linux linux-lts linux-zen linux-hardened; do
+    for k in linux linux-lts linux-zen linux-hardened linux-cachyos; do
         if pacman -Q "$k" &>/dev/null; then
             headers_pkgs+=" ${k}-headers"
         fi
@@ -539,6 +628,7 @@ menu_gpu(){
                     vulkan-intel lib32-vulkan-intel \
                     "${nv_open_pkg}" nvidia-utils lib32-nvidia-utils nvidia-settings \
                     nvidia-prime
+                configure_nvidia_mkinitcpio
             ;;
             "hybrid-amd-nvidia")
                 echo "Installing Hybrid Laptop AMD + NVIDIA Open (${nv_open_pkg} + prime-run)..."
@@ -548,15 +638,18 @@ menu_gpu(){
                     vulkan-radeon lib32-vulkan-radeon \
                     "${nv_open_pkg}" nvidia-utils lib32-nvidia-utils nvidia-settings \
                     nvidia-prime
+                configure_nvidia_mkinitcpio
             ;;
             "nvidia-open")
                 echo "Installing NVIDIA Open drivers (${nv_open_pkg})..."
                 pacman -S --needed --noconfirm "${nv_open_pkg}" nvidia-utils lib32-nvidia-utils nvidia-settings
+                configure_nvidia_mkinitcpio
             ;;
             "nvidia-dkms")
                 echo "Installing NVIDIA Proprietary DKMS drivers..."
                 install_kernel_headers_and_dkms
                 pacman -S --needed --noconfirm nvidia-dkms nvidia-utils lib32-nvidia-utils nvidia-settings
+                configure_nvidia_mkinitcpio
             ;;
             "intel")
                 echo "Installing Intel Graphics drivers..."
@@ -620,6 +713,10 @@ menu_de(){
         
     if [ "$?" = "0" ]; then
         clear
+        echo "Ensuring NetworkManager and wireless connectivity are installed and enabled..."
+        pacman -S --needed --noconfirm networkmanager iwd wireless-regdb
+        systemctl enable NetworkManager.service 2>/dev/null || true
+
         case ${sel} in
             "plasma")
                 dm_options=()
@@ -710,6 +807,7 @@ menu_de(){
             ;;
         esac
         configure_system_keymap
+        configure_system_locale
         pressanykey
     fi
 }
@@ -739,6 +837,7 @@ menu_fonts(){
 # --------------------------------------------------------
 menu_services(){
     options=()
+    options+=("networkmanager" "NetworkManager & WiFi (iwd)" on)
     options+=("bluetooth" "Bluetooth support (bluez)" on)
     options+=("cups" "Printing support (CUPS)" on)
     options+=("fstrim" "SSD/NVMe periodic TRIM timer" on)
@@ -753,6 +852,12 @@ menu_services(){
         for srv in ${sel}; do
             clean_srv=$(echo ${srv} | sed 's/"//g')
             case ${clean_srv} in
+                "networkmanager")
+                    echo "Enabling NetworkManager & WiFi..."
+                    pacman -S --needed --noconfirm networkmanager iwd wireless-regdb
+                    systemctl enable NetworkManager.service
+                    systemctl start NetworkManager.service 2>/dev/null || true
+                ;;
                 "bluetooth")
                     echo "Enabling Bluetooth..."
                     pacman -S --needed --noconfirm bluez bluez-utils
@@ -879,18 +984,349 @@ menu_tuxedo(){
 }
 
 # --------------------------------------------------------
+# Module: CachyOS Repository, Kernel & System Tweaks
+# --------------------------------------------------------
+cachyos_enable_repo(){
+    echo "=== Enabling CachyOS Repository ==="
+    if grep -q "\[cachyos" /etc/pacman.conf; then
+        echo "CachyOS repository already configured in /etc/pacman.conf."
+        return 0
+    fi
+
+    echo "Detecting CPU architecture..."
+    local cachy_arch="standard"
+    if /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v4 (supported"; then
+        cachy_arch="v4"
+    elif /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v3 (supported"; then
+        cachy_arch="v3"
+    elif grep -q "avx512f" /proc/cpuinfo 2>/dev/null && grep -q "avx512bw" /proc/cpuinfo 2>/dev/null; then
+        cachy_arch="v4"
+    elif grep -q "avx2" /proc/cpuinfo 2>/dev/null && grep -q "bmi2" /proc/cpuinfo 2>/dev/null; then
+        cachy_arch="v3"
+    fi
+    echo "Detected CPU architecture level: ${cachy_arch}"
+
+    echo "Importing CachyOS signing key..."
+    pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com 2>/dev/null || \
+    pacman-key --recv-keys F3B607488DB35A47 --keyserver hkps://keyserver.ubuntu.com 2>/dev/null || true
+    pacman-key --lsign-key F3B607488DB35A47 2>/dev/null || true
+
+    echo "Setting up /etc/pacman.d/cachyos-mirrorlist..."
+    mkdir -p /etc/pacman.d
+    cat << 'EOF' > /etc/pacman.d/cachyos-mirrorlist
+Server = https://mirror.cachyos.org/repo/$arch/$repo
+Server = https://fastmirror.cachyos.org/repo/$arch/$repo
+Server = https://in-mirror.cachyos.org/repo/$arch/$repo
+EOF
+
+    echo "Adding CachyOS repository sections to /etc/pacman.conf..."
+    case "${cachy_arch}" in
+        "v4")
+            cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos-v4]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-core-v4]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-extra-v4]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+        ;;
+        "v3")
+            cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos-v3]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-core-v3]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-extra-v3]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+        ;;
+        *)
+            cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-core]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-extra]
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+        ;;
+    esac
+
+    sed -i '/^\[core\]/e cat /tmp/cachyos-repos.conf' /etc/pacman.conf
+    rm -f /tmp/cachyos-repos.conf
+
+    echo "Refreshing package databases..."
+    pacman -Sy
+    echo "Installing CachyOS keyring and mirrorlist packages..."
+    pacman -S --needed --noconfirm cachyos-keyring cachyos-mirrorlist 2>/dev/null || true
+}
+
+cachyos_install_kernel_and_settings(){
+    cachyos_enable_repo
+    echo "=== Installing linux-cachyos, linux-cachyos-headers & cachyos-settings ==="
+    pacman -S --needed --noconfirm linux-cachyos linux-cachyos-headers cachyos-settings
+}
+
+cachyos_apply_io_schedulers(){
+    local target_root="${1:-}"
+    echo "=== Configuring I/O Schedulers udev rules (/etc/udev/rules.d/60-ioschedulers.rules) ==="
+    mkdir -p "${target_root}/etc/udev/rules.d"
+    cat << 'EOF' > "${target_root}/etc/udev/rules.d/60-ioschedulers.rules"
+# HDD
+ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", \
+    ATTR{queue/scheduler}="bfq"
+
+# SSD
+ACTION=="add|change", KERNEL=="sd[a-z]*|mmcblk[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+
+# NVMe SSD
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+EOF
+    echo "Rule created: ${target_root}/etc/udev/rules.d/60-ioschedulers.rules"
+    if [ -z "${target_root}" ]; then
+        udevadm control --reload 2>/dev/null || true
+        udevadm trigger 2>/dev/null || true
+    fi
+}
+
+cachyos_apply_sysctl_tweaks(){
+    local target_root="${1:-}"
+    echo "=== Configuring Sysctl Tweaks (/etc/sysctl.d/99-splitlock.conf) ==="
+    mkdir -p "${target_root}/etc/sysctl.d"
+    cat << 'EOF' > "${target_root}/etc/sysctl.d/99-splitlock.conf"
+kernel.split_lock_mitigate=0
+vm.max_map_count = 2147483642
+EOF
+    echo "Config created: ${target_root}/etc/sysctl.d/99-splitlock.conf"
+    if [ -z "${target_root}" ]; then
+        sysctl -p /etc/sysctl.d/99-splitlock.conf 2>/dev/null || true
+    fi
+}
+
+cachyos_optimize_mkinitcpio(){
+    local target_root="${1:-}"
+    local mkconf="${target_root}/etc/mkinitcpio.conf"
+
+    echo "=== Installing Plymouth and LZ4 ==="
+    if [ -z "${target_root}" ]; then
+        pacman -S --needed --noconfirm plymouth lz4
+    else
+        pacstrap "${target_root}" plymouth lz4
+    fi
+
+    echo "=== Setting default Plymouth theme to spinner ==="
+    mkdir -p "${target_root}/etc/plymouth"
+    cat << 'EOF' > "${target_root}/etc/plymouth/plymouthd.conf"
+[Daemon]
+Theme=spinner
+ShowDelay=0
+EOF
+    if [ -z "${target_root}" ] && command -v plymouth-set-default-theme >/dev/null 2>&1; then
+        plymouth-set-default-theme spinner 2>/dev/null || true
+    fi
+
+    echo "=== Configuring ${mkconf} ==="
+    if [ -f "${mkconf}" ]; then
+        # 1. Modules: nvme + (nvidia if present)
+        local modules_list="nvme"
+        local has_nvidia="0"
+        if pacman -Q nvidia 2>/dev/null || pacman -Q nvidia-open 2>/dev/null || pacman -Q nvidia-dkms 2>/dev/null || pacman -Q nvidia-open-dkms 2>/dev/null || find /usr/lib/modules -name "nvidia.ko*" 2>/dev/null | grep -q "nvidia"; then
+            has_nvidia="1"
+        fi
+
+        if [ "${has_nvidia}" = "1" ]; then
+            modules_list="nvme nvidia nvidia_modeset nvidia_uvm nvidia_drm"
+        fi
+
+        if grep -q "^MODULES=" "${mkconf}"; then
+            sed -i "s|^MODULES=.*|MODULES=(${modules_list})|" "${mkconf}"
+        else
+            echo "MODULES=(${modules_list})" >> "${mkconf}"
+        fi
+        echo "Configured MODULES=(${modules_list})"
+
+        # 2. Hooks: HOOKS=(systemd autodetect microcode modconf kms block filesystems plymouth)
+        local hooks_list="systemd autodetect microcode modconf kms block filesystems plymouth"
+        if grep -q "encrypt" "${mkconf}" || [ "${luksroot}" = "1" ] || [ "${luksdrive}" = "1" ]; then
+            hooks_list="systemd autodetect microcode modconf kms block sd-encrypt filesystems plymouth"
+        fi
+        if grep -q "^HOOKS=" "${mkconf}"; then
+            sed -i "s|^HOOKS=.*|HOOKS=(${hooks_list})|" "${mkconf}"
+        else
+            echo "HOOKS=(${hooks_list})" >> "${mkconf}"
+        fi
+        echo "Configured HOOKS=(${hooks_list})"
+
+        # 3. Compression: COMPRESSION="lz4"
+        if grep -q "^COMPRESSION=" "${mkconf}"; then
+            sed -i 's|^COMPRESSION=.*|COMPRESSION="lz4"|' "${mkconf}"
+        elif grep -q "^#COMPRESSION=\"lz4\"" "${mkconf}"; then
+            sed -i 's|^#COMPRESSION="lz4"|COMPRESSION="lz4"|' "${mkconf}"
+        else
+            echo 'COMPRESSION="lz4"' >> "${mkconf}"
+        fi
+
+        # 4. Compression Options: COMPRESSION_OPTIONS=(-1)
+        if grep -q "^COMPRESSION_OPTIONS=" "${mkconf}"; then
+            sed -i 's|^COMPRESSION_OPTIONS=.*|COMPRESSION_OPTIONS=(-1)|' "${mkconf}"
+        elif grep -q "^#COMPRESSION_OPTIONS=" "${mkconf}"; then
+            sed -i 's|^#COMPRESSION_OPTIONS=.*|COMPRESSION_OPTIONS=(-1)|' "${mkconf}"
+        else
+            echo 'COMPRESSION_OPTIONS=(-1)' >> "${mkconf}"
+        fi
+
+        # 5. Modules Decompress: MODULES_DECOMPRESS="yes"
+        if grep -q "^MODULES_DECOMPRESS=" "${mkconf}"; then
+            sed -i 's|^MODULES_DECOMPRESS=.*|MODULES_DECOMPRESS="yes"|' "${mkconf}"
+        elif grep -q "^#MODULES_DECOMPRESS=" "${mkconf}"; then
+            sed -i 's|^#MODULES_DECOMPRESS=.*|MODULES_DECOMPRESS="yes"|' "${mkconf}"
+        else
+            echo 'MODULES_DECOMPRESS="yes"' >> "${mkconf}"
+        fi
+
+        # 6. Rebuild initramfs
+        echo "=== Regenerating initramfs (mkinitcpio -P) ==="
+        if [ -z "${target_root}" ]; then
+            mkinitcpio -P
+        else
+            archchroot genmkinitcpio
+        fi
+    fi
+}
+
+menu_cachyos(){
+    options=()
+    options+=("full" "${txtcachyosfull}")
+    options+=("repo" "${txtcachyosrepoonly}")
+    options+=("kernel" "${txtcachyoskernelonly}")
+    options+=("schedulers" "${txtcachyosscheduleronly}")
+    options+=("sysctl" "${txtcachyossysctlonly}")
+    options+=("mkinitcpio" "${txtcachyosmkinitcpioonly}")
+
+    sel=$(dialog --backtitle "${apptitle}" --title "${txtcachyostitle}" \
+        --menu "${txtcachyosdesc}" 0 0 0 \
+        "${options[@]}" \
+        3>&1 1>&2 2>&3)
+
+    if [ "$?" = "0" ]; then
+        case ${sel} in
+            "full")
+                clear
+                echo "=== Step 1/5: Enabling CachyOS Repository ==="
+                cachyos_enable_repo
+                echo ""
+                echo "=== Step 2/5: Installing linux-cachyos, headers & cachyos-settings ==="
+                cachyos_install_kernel_and_settings
+                echo ""
+                echo "=== Step 3/5: Configuring I/O Schedulers (adios / bfq) ==="
+                cachyos_apply_io_schedulers
+                echo ""
+                echo "=== Step 4/5: Configuring Sysctl Tweaks (split-lock & max_map_count) ==="
+                cachyos_apply_sysctl_tweaks
+                echo ""
+                echo "=== Step 5/5: Optimizing mkinitcpio & Plymouth spinner ==="
+                cachyos_optimize_mkinitcpio
+                echo ""
+                pressanykey
+                dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtcachyossuccess}" 0 0
+            ;;
+            "repo")
+                clear
+                cachyos_enable_repo
+                pressanykey
+            ;;
+            "kernel")
+                clear
+                cachyos_install_kernel_and_settings
+                pressanykey
+            ;;
+            "schedulers")
+                clear
+                cachyos_apply_io_schedulers
+                pressanykey
+            ;;
+            "sysctl")
+                clear
+                cachyos_apply_sysctl_tweaks
+                pressanykey
+            ;;
+            "mkinitcpio")
+                clear
+                cachyos_optimize_mkinitcpio
+                pressanykey
+            ;;
+        esac
+    fi
+}
+
+configure_fastfetch_bashrc(){
+    echo "Configuring fastfetch to run automatically on terminal startup..."
+    local snippet='
+# Autostart fastfetch on interactive shell launch
+if [[ $- == *i* ]] && command -v fastfetch >/dev/null 2>&1; then
+    fastfetch
+fi'
+
+    mkdir -p /etc/skel
+    if [ ! -f /etc/bash.bashrc ]; then
+        echo "${snippet}" > /etc/bash.bashrc
+    elif ! grep -q "Autostart fastfetch" /etc/bash.bashrc; then
+        echo "${snippet}" >> /etc/bash.bashrc
+    fi
+
+    if [ -f /etc/skel/.bashrc ] && ! grep -q "Autostart fastfetch" /etc/skel/.bashrc; then
+        echo "${snippet}" >> /etc/skel/.bashrc
+    elif [ ! -f /etc/skel/.bashrc ]; then
+        echo "${snippet}" > /etc/skel/.bashrc
+    fi
+
+    if [ -f /root/.bashrc ] && ! grep -q "Autostart fastfetch" /root/.bashrc; then
+        echo "${snippet}" >> /root/.bashrc
+    fi
+
+    for u_home in /home/*; do
+        if [ -d "${u_home}" ]; then
+            local u_name
+            u_name=$(basename "${u_home}")
+            if [ -f "${u_home}/.bashrc" ] && ! grep -q "Autostart fastfetch" "${u_home}/.bashrc"; then
+                echo "${snippet}" >> "${u_home}/.bashrc"
+                chown "${u_name}" "${u_home}/.bashrc" 2>/dev/null || true
+            elif [ ! -f "${u_home}/.bashrc" ]; then
+                echo "${snippet}" > "${u_home}/.bashrc"
+                chown "${u_name}" "${u_home}/.bashrc" 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
+# --------------------------------------------------------
 # Module: Popular Applications
 # --------------------------------------------------------
 menu_apps(){
     options=()
     options+=("firefox" "Firefox Web Browser" on)
+    options+=("google-chrome" "Google Chrome Web Browser" off)
+    options+=("vivaldi" "Vivaldi Web Browser & codecs" off)
     options+=("chromium" "Chromium Web Browser" off)
+    options+=("bitwarden" "Bitwarden Password Manager" on)
     options+=("libreoffice-fresh" "LibreOffice Fresh Suite" off)
     options+=("vlc" "VLC Media Player" on)
+    options+=("smplayer" "SMPlayer Media Player (MPV/MPlayer GUI)" off)
     options+=("mpv" "MPV Video Player" off)
-    options+=("fastfetch" "System Info CLI tool" on)
-    options+=("inxi" "Full-featured CLI system information" on)
+    options+=("fastfetch" "System Info CLI (shown on terminal launch)" on)
     options+=("btop" "Modern CPU/RAM/Disk Resource Monitor" on)
+    options+=("htop" "Interactive Process Viewer" on)
+    options+=("inxi" "Full-featured CLI system information" on)
     options+=("nvtop" "GPU Process Monitor (AMD/Intel/NVIDIA)" on)
     options+=("nmon" "Performance Monitoring tool" off)
     options+=("p7zip" "Archive compression tools" on)
@@ -903,17 +1339,58 @@ menu_apps(){
         
     if [ "$?" = "0" ]; then
         clear
-        pkgs=""
+        local pacman_pkgs=""
+        local aur_pkgs=""
         for itm in ${sel}; do
-            pkgs="${pkgs} $(echo ${itm} | sed 's/"//g')"
+            local clean_pkg=$(echo ${itm} | sed 's/"//g')
+            case "${clean_pkg}" in
+                "google-chrome")
+                    if pacman -Si google-chrome &>/dev/null; then
+                        pacman_pkgs="${pacman_pkgs} google-chrome"
+                    else
+                        aur_pkgs="${aur_pkgs} google-chrome"
+                    fi
+                ;;
+                "smplayer")
+                    pacman_pkgs="${pacman_pkgs} smplayer smplayer-themes smplayer-skins"
+                ;;
+                "vivaldi")
+                    pacman_pkgs="${pacman_pkgs} vivaldi vivaldi-ffmpeg-codecs"
+                ;;
+                *)
+                    pacman_pkgs="${pacman_pkgs} ${clean_pkg}"
+                ;;
+            esac
         done
-        if [ -n "${pkgs}" ]; then
-            echo "Installing applications:${pkgs}..."
-            pacman -S --needed --noconfirm ${pkgs}
-            if [[ "${pkgs}" == *"libreoffice-fresh"* ]] && [ "${lang}" = "fr" ]; then
-                pacman -S --needed --noconfirm libreoffice-fresh-fr 2>/dev/null || true
+
+        if [ -n "${pacman_pkgs}" ]; then
+            echo "Installing applications:${pacman_pkgs}..."
+            pacman -S --needed --noconfirm ${pacman_pkgs}
+        fi
+
+        if [ -n "${aur_pkgs}" ]; then
+            if check_regular_user; then
+                echo "Installing AUR applications:${aur_pkgs}..."
+                install_aur_pkgs "${target_user}" ${aur_pkgs}
             fi
         fi
+
+        if [ "${lang}" = "fr" ] || grep -qi "^LANG=.*fr" /etc/locale.conf 2>/dev/null; then
+            if [[ "${pacman_pkgs}" == *"firefox"* ]]; then
+                echo "Installing Firefox French language pack (firefox-i18n-fr)..."
+                pacman -S --needed --noconfirm firefox-i18n-fr 2>/dev/null || true
+            fi
+            if [[ "${pacman_pkgs}" == *"libreoffice-fresh"* ]]; then
+                echo "Installing LibreOffice French language pack (libreoffice-fresh-fr)..."
+                pacman -S --needed --noconfirm libreoffice-fresh-fr 2>/dev/null || true
+            fi
+            pacman -S --needed --noconfirm hunspell-fr 2>/dev/null || true
+        fi
+
+        if [[ "${pacman_pkgs}" == *"fastfetch"* ]] || command -v fastfetch &>/dev/null; then
+            configure_fastfetch_bashrc
+        fi
+
         pressanykey
     fi
 }
@@ -946,9 +1423,10 @@ mainmenu(){
         options+=("7" "${txtfontsmenu}")
         options+=("8" "${txtservicesmenu}")
         options+=("9" "${txttuxedomenu}")
-        options+=("10" "${txtappsmenu}")
-        options+=("11" "${txtaurmenu}")
-        options+=("12" "${txtreboot}")
+        options+=("10" "${txtcachyosmenu}")
+        options+=("11" "${txtappsmenu}")
+        options+=("12" "${txtaurmenu}")
+        options+=("13" "${txtreboot}")
         
         sel=$(dialog --backtitle "${apptitle}" --title "${txtmainmenu}" \
             --cancel-button "${txtexit}" --default-item "${default_item}" \
@@ -971,9 +1449,10 @@ mainmenu(){
             "7") menu_fonts; default_item="8";;
             "8") menu_services; default_item="9";;
             "9") menu_tuxedo; default_item="10";;
-            "10") menu_apps; default_item="11";;
-            "11") menu_aur; default_item="12";;
-            "12")
+            "10") menu_cachyos; default_item="11";;
+            "11") menu_apps; default_item="12";;
+            "12") menu_aur; default_item="13";;
+            "13")
                 if dialog --backtitle "${apptitle}" --title "${txtreboot}" --yesno "${txtreboot} ?" 0 0; then
                     clear
                     reboot

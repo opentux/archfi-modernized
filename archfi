@@ -873,6 +873,7 @@ installmenu(){
 	options+=("${txteditmirrorlist}" "(${txtoptional})")
 	options+=("${txtfiltermirrorlist}" "reflector (${txtoptional})")
 	options+=("${txtparalleldownloads}" "(${txtoptional})")
+	options+=("${txtcachyosrepo}" "(${txtoptional})")
 	options+=("${txtinstallarchlinux}" "pacstrap")
 	options+=("${txtconfigarchlinux}" "")
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtinstallmenu}" --cancel-button "${txtunmount}" --default-item "${nextitem}" --menu "" 0 0 0 \
@@ -894,7 +895,13 @@ installmenu(){
 			;;
 			"${txtparalleldownloads}")
 				paralleldownloads
-				nextitem="${txtinstallarchlinuk}"
+				nextitem="${txtcachyosrepo}"
+			;;
+			"${txtcachyosrepo}")
+				clear
+				cachyos_enable_repo_archfi
+				pressanykey
+				nextitem="${txtinstallarchlinux}"
 			;;
 			"${txtinstallarchlinux}")
 				if(installbase) then
@@ -972,19 +979,105 @@ paralleldownloads() {
 
 }
 
+cachyos_enable_repo_archfi(){
+	echo "=== Enabling CachyOS Repositories (Live ISO Safe Mode) ==="
+	if grep -q "\[cachyos" /etc/pacman.conf; then
+		echo "CachyOS repository already active in /etc/pacman.conf"
+		return 0
+	fi
+
+	echo "Detecting CPU architecture..."
+	local cachy_arch="standard"
+	if /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v4 (supported"; then
+		cachy_arch="v4"
+	elif /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v3 (supported"; then
+		cachy_arch="v3"
+	elif grep -q "avx512f" /proc/cpuinfo 2>/dev/null && grep -q "avx512bw" /proc/cpuinfo 2>/dev/null; then
+		cachy_arch="v4"
+	elif grep -q "avx2" /proc/cpuinfo 2>/dev/null && grep -q "bmi2" /proc/cpuinfo 2>/dev/null; then
+		cachy_arch="v3"
+	fi
+	echo "Detected CPU architecture level: ${cachy_arch}"
+
+	echo "Importing CachyOS signing key..."
+	pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com 2>/dev/null || \
+	pacman-key --recv-keys F3B607488DB35A47 --keyserver hkps://keyserver.ubuntu.com 2>/dev/null || true
+	pacman-key --lsign-key F3B607488DB35A47 2>/dev/null || true
+
+	echo "Setting up /etc/pacman.d/cachyos-mirrorlist..."
+	mkdir -p /etc/pacman.d
+	cat << 'EOF' > /etc/pacman.d/cachyos-mirrorlist
+Server = https://mirror.cachyos.org/repo/$arch/$repo
+Server = https://fastmirror.cachyos.org/repo/$arch/$repo
+Server = https://in-mirror.cachyos.org/repo/$arch/$repo
+EOF
+
+	echo "Adding CachyOS repository sections to /etc/pacman.conf..."
+	case "${cachy_arch}" in
+		"v4")
+			cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos-v4]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-core-v4]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-extra-v4]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+		;;
+		"v3")
+			cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos-v3]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-core-v3]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-extra-v3]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+		;;
+		*)
+			cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-core]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[cachyos-extra]
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+		;;
+	esac
+
+	sed -i '/^\[core\]/e cat /tmp/cachyos-repos.conf' /etc/pacman.conf
+	rm -f /tmp/cachyos-repos.conf
+
+	echo "Refreshing pacman database with CachyOS (database only, 0 RAM package install)..."
+	pacman -Sy
+}
+
 installbase(){
-	pkgs="base base-devel"
+	pkgs="base base-devel networkmanager iwd"
 	options=()
 	options+=("linux" "")
 	options+=("linux-lts" "")
 	options+=("linux-zen" "")
 	options+=("linux-hardened" "")
+	options+=("linux-cachyos" "(CachyOS Performance)")
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtinstallarchlinuxkernel}" --menu "" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
 	if [ "$?" = "0" ]; then
 		pkgs+=" ${sel}"
 		chosen_kernel="${sel}"
+		if [ "${chosen_kernel}" = "linux-cachyos" ]; then
+			clear
+			cachyos_enable_repo_archfi
+		fi
 	else
 		return 1
 	fi
@@ -1006,6 +1099,9 @@ installbase(){
 	options+=("intel-ucode" "Intel CPU Microcode" ${intel_state})
 	options+=("amd-ucode" "AMD CPU Microcode" ${amd_state})
 	options+=("sof-firmware" "Sound Open Firmware" off)
+	if [ "${chosen_kernel}" = "linux-cachyos" ] || grep -q "\[cachyos\]" /etc/pacman.conf; then
+		options+=("cachyos-settings" "CachyOS System Settings & Tweaks" on)
+	fi
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtinstallarchlinuxfirmwares}" --checklist "" 0 0 0 \
 		"${options[@]}" \
 		3>&1 1>&2 2>&3)
@@ -1080,12 +1176,40 @@ installbase(){
 	if [ ! -z $numpkg ]; then
 		sed -i "s/.*ParallelDownloads.*/ParallelDownloads = ${numpkg}/" /mnt/etc/pacman.conf	
 	fi	
+	if [ -f /etc/pacman.d/cachyos-mirrorlist ]; then
+		mkdir -p /mnt/etc/pacman.d
+		cp -f /etc/pacman.d/cachyos-mirrorlist /mnt/etc/pacman.d/
+	fi
+	if grep -q "\[cachyos" /etc/pacman.conf && ! grep -q "\[cachyos" /mnt/etc/pacman.conf; then
+		sed -n '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!p }' /etc/pacman.conf > /tmp/mnt-cachyos.conf
+		sed -i '/^\[core\]/e cat /tmp/mnt-cachyos.conf' /mnt/etc/pacman.conf
+		rm -f /tmp/mnt-cachyos.conf
+	fi	
+
+	echo "Enabling NetworkManager service in /mnt..."
+	arch-chroot /mnt systemctl enable NetworkManager.service 2>/dev/null || true
+
 	if [[ "$locale" =~ ^fr ]] || [[ "$LANG" =~ ^fr ]]; then
-		echo "Initializing French keyboard layout (vconsole, X11, Wayland)..."
-		mkdir -p /mnt/etc
+		echo "Initializing French locale, keyboard layout, and desktop translations..."
+		mkdir -p /mnt/etc /mnt/etc/xdg /mnt/etc/skel/.config
 		echo "KEYMAP=fr" > /mnt/etc/vconsole.conf
 		echo "FONT=lat1-16" >> /mnt/etc/vconsole.conf
+		echo "LANG=fr_FR.UTF-8" > /mnt/etc/locale.conf
+		echo "LC_COLLATE=C" >> /mnt/etc/locale.conf
+		sed -i 's/^#\(fr_FR.UTF-8 UTF-8\)/\1/' /mnt/etc/locale.gen
+		sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /mnt/etc/locale.gen
+		archchroot setlocale
 		archapplykeyboardconfig "fr"
+
+		# KDE Plasma French configuration
+		cat << 'EOF' > /mnt/etc/xdg/plasma-localerc
+[Formats]
+LANG=fr_FR.UTF-8
+
+[Translations]
+LANGUAGE=fr_FR:fr
+EOF
+		cp /mnt/etc/xdg/plasma-localerc /mnt/etc/skel/.config/plasma-localerc 2>/dev/null || true
 	fi
 	pressanykey
 }
@@ -1129,6 +1253,7 @@ archmenu(){
 	if [ "${isnvme}" = "1" ]; then
 		options+=("${txtgenerate//%1/mkinitcpio.conf-nvme}" "(nvme module)")
 	fi
+	options+=("${txtcachyostweaks}" "(adios, sysctl, mkinitcpio/plymouth)")
 	options+=("${txtedit//%1/fstab}" "(${txtoptional})")
 	options+=("${txtedit//%1/crypttab}" "(${txtoptional})")
 	options+=("${txtedit//%1/mkinitcpio.conf}" "(${txtoptional})")
@@ -1207,6 +1332,10 @@ archmenu(){
 			;;
 			"${txtgenerate//%1/mkinitcpio.conf-nvme}")
 				archgenmkinitcpionvme
+				nextitem="${txtcachyostweaks}"
+			;;
+			"${txtcachyostweaks}")
+				archcachyostweaksmenu
 				nextitem="${txtbootloader}"
 			;;
 			"${txtedit//%1/fstab}")
@@ -1545,15 +1674,20 @@ archsetuser(){
 		echo "Configured /etc/sudoers.d/${username} (NOPASSWD: ALL)"
 	fi
 
-<<<<<<< HEAD
-=======
 	if [ -f /mnt/etc/xdg/kxkbrc ]; then
 		mkdir -p "/mnt/home/${username}/.config"
 		cp /mnt/etc/xdg/kxkbrc "/mnt/home/${username}/.config/kxkbrc"
 		arch-chroot /mnt chown -R "${username}:wheel" "/home/${username}/.config" 2>/dev/null || true
 	fi
-
->>>>>>> 1a6be0a (correction/gestion locale clavier wayland)
+	if [ -f /mnt/etc/xdg/plasma-localerc ]; then
+		mkdir -p "/mnt/home/${username}/.config"
+		cp /mnt/etc/xdg/plasma-localerc "/mnt/home/${username}/.config/plasma-localerc"
+		arch-chroot /mnt chown -R "${username}:wheel" "/home/${username}/.config" 2>/dev/null || true
+	fi
+	if [ -f /mnt/etc/skel/.bashrc ] && [ -d "/mnt/home/${username}" ]; then
+		cp -f /mnt/etc/skel/.bashrc "/mnt/home/${username}/.bashrc" 2>/dev/null || true
+		arch-chroot /mnt chown "${username}:wheel" "/home/${username}/.bashrc" 2>/dev/null || true
+	fi
 	pressanykey
 	dialog --backtitle "${apptitle}" --title "Success" --msgbox "${txtusersuccess//%1/${username}}" 0 0
 }
@@ -1618,6 +1752,165 @@ archgenmkinitcpionvme(){
 	sed -i "s/MODULES=()/MODULES=(nvme)/g" /mnt/etc/mkinitcpio.conf
 	archchroot genmkinitcpio
 	pressanykey
+}
+
+archcachyostweaksmenu(){
+	options=()
+	options+=("full" "Full Tweaks (adios + sysctl + mkinitcpio/Plymouth - Recommended)")
+	options+=("schedulers" "I/O Schedulers rule (adios on SSD/NVMe, bfq on HDD)")
+	options+=("sysctl" "Sysctl Tweaks (split_lock_mitigate=0, max_map_count)")
+	options+=("mkinitcpio" "Optimize mkinitcpio (lz4, nvme/nvidia, Plymouth spinner)")
+
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtcachyostweaks}" \
+		--cancel-button "${txtback}" --menu "" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+
+	if [ "$?" = "0" ]; then
+		case ${sel} in
+			"full")
+				clear
+				echo "=== 1/3: Configuring I/O Schedulers (adios / bfq) ==="
+				mkdir -p /mnt/etc/udev/rules.d
+				cat << 'EOF' > /mnt/etc/udev/rules.d/60-ioschedulers.rules
+# HDD
+ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", \
+    ATTR{queue/scheduler}="bfq"
+
+# SSD
+ACTION=="add|change", KERNEL=="sd[a-z]*|mmcblk[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+
+# NVMe SSD
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+EOF
+				echo "Saved /mnt/etc/udev/rules.d/60-ioschedulers.rules"
+				echo ""
+				echo "=== 2/3: Configuring Sysctl Tweaks ==="
+				mkdir -p /mnt/etc/sysctl.d
+				cat << 'EOF' > /mnt/etc/sysctl.d/99-splitlock.conf
+kernel.split_lock_mitigate=0
+vm.max_map_count = 2147483642
+EOF
+				echo "Saved /mnt/etc/sysctl.d/99-splitlock.conf"
+				echo ""
+				echo "=== 3/3: Optimizing mkinitcpio & Plymouth spinner ==="
+				archcachyosmkinitcpio
+				echo ""
+				pressanykey
+			;;
+			"schedulers")
+				clear
+				echo "Configuring I/O Schedulers (/mnt/etc/udev/rules.d/60-ioschedulers.rules)..."
+				mkdir -p /mnt/etc/udev/rules.d
+				cat << 'EOF' > /mnt/etc/udev/rules.d/60-ioschedulers.rules
+# HDD
+ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", \
+    ATTR{queue/scheduler}="bfq"
+
+# SSD
+ACTION=="add|change", KERNEL=="sd[a-z]*|mmcblk[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+
+# NVMe SSD
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+EOF
+				echo "Saved /mnt/etc/udev/rules.d/60-ioschedulers.rules"
+				pressanykey
+			;;
+			"sysctl")
+				clear
+				echo "Configuring Sysctl Tweaks (/mnt/etc/sysctl.d/99-splitlock.conf)..."
+				mkdir -p /mnt/etc/sysctl.d
+				cat << 'EOF' > /mnt/etc/sysctl.d/99-splitlock.conf
+kernel.split_lock_mitigate=0
+vm.max_map_count = 2147483642
+EOF
+				echo "Saved /mnt/etc/sysctl.d/99-splitlock.conf"
+				pressanykey
+			;;
+			"mkinitcpio")
+				clear
+				archcachyosmkinitcpio
+				pressanykey
+			;;
+		esac
+	fi
+}
+
+archcachyosmkinitcpio(){
+	echo "Installing Plymouth and LZ4 into /mnt..."
+	pacstrap /mnt plymouth lz4
+
+	echo "Configuring Plymouth spinner theme..."
+	mkdir -p /mnt/etc/plymouth
+	cat << 'EOF' > /mnt/etc/plymouth/plymouthd.conf
+[Daemon]
+Theme=spinner
+ShowDelay=0
+EOF
+
+	local mkconf="/mnt/etc/mkinitcpio.conf"
+	if [ -f "${mkconf}" ]; then
+		local modules_list="nvme"
+		local has_nvidia="0"
+		if [ -d "/mnt/usr/lib/modules" ] && find /mnt/usr/lib/modules -name "nvidia.ko*" 2>/dev/null | grep -q "nvidia"; then
+			has_nvidia="1"
+		fi
+		if [ "${has_nvidia}" = "1" ]; then
+			modules_list="nvme nvidia nvidia_modeset nvidia_uvm nvidia_drm"
+		fi
+
+		if grep -q "^MODULES=" "${mkconf}"; then
+			sed -i "s|^MODULES=.*|MODULES=(${modules_list})|" "${mkconf}"
+		else
+			echo "MODULES=(${modules_list})" >> "${mkconf}"
+		fi
+		echo "Configured MODULES=(${modules_list})"
+
+		local hooks_list="systemd autodetect microcode modconf kms block filesystems plymouth"
+		if grep -q "encrypt" "${mkconf}" || [ "${luksroot}" = "1" ] || [ "${luksdrive}" = "1" ]; then
+			hooks_list="systemd autodetect microcode modconf kms block sd-encrypt filesystems plymouth"
+		fi
+		if grep -q "^HOOKS=" "${mkconf}"; then
+			sed -i "s|^HOOKS=.*|HOOKS=(${hooks_list})|" "${mkconf}"
+		else
+			echo "HOOKS=(${hooks_list})" >> "${mkconf}"
+		fi
+		echo "Configured HOOKS=(${hooks_list})"
+
+		# COMPRESSION="lz4"
+		if grep -q "^COMPRESSION=" "${mkconf}"; then
+			sed -i 's|^COMPRESSION=.*|COMPRESSION="lz4"|' "${mkconf}"
+		elif grep -q "^#COMPRESSION=\"lz4\"" "${mkconf}"; then
+			sed -i 's|^#COMPRESSION="lz4"|COMPRESSION="lz4"|' "${mkconf}"
+		else
+			echo 'COMPRESSION="lz4"' >> "${mkconf}"
+		fi
+
+		# COMPRESSION_OPTIONS=(-1)
+		if grep -q "^COMPRESSION_OPTIONS=" "${mkconf}"; then
+			sed -i 's|^COMPRESSION_OPTIONS=.*|COMPRESSION_OPTIONS=(-1)|' "${mkconf}"
+		elif grep -q "^#COMPRESSION_OPTIONS=" "${mkconf}"; then
+			sed -i 's|^#COMPRESSION_OPTIONS=.*|COMPRESSION_OPTIONS=(-1)|' "${mkconf}"
+		else
+			echo 'COMPRESSION_OPTIONS=(-1)' >> "${mkconf}"
+		fi
+
+		# MODULES_DECOMPRESS="yes"
+		if grep -q "^MODULES_DECOMPRESS=" "${mkconf}"; then
+			sed -i 's|^MODULES_DECOMPRESS=.*|MODULES_DECOMPRESS="yes"|' "${mkconf}"
+		elif grep -q "^#MODULES_DECOMPRESS=" "${mkconf}"; then
+			sed -i 's|^#MODULES_DECOMPRESS=.*|MODULES_DECOMPRESS="yes"|' "${mkconf}"
+		else
+			echo 'MODULES_DECOMPRESS="yes"' >> "${mkconf}"
+		fi
+
+		echo "Regenerating initramfs (mkinitcpio -P)..."
+		archchroot genmkinitcpio
+	fi
 }
 
 archeditmkinitcpio(){
@@ -2128,6 +2421,8 @@ archextrasmenu(){
 	options+=("vim" "Terminal editor" off)
 	options+=("sudo" "Privilege elevation" on)
 	options+=("git" "Version control" on)
+	options+=("fastfetch" "System Info CLI" on)
+	options+=("htop" "Interactive Process Viewer" on)
 	options+=("dhcpcd" "Legacy DHCP client" off)
 	sel=$(dialog --backtitle "${apptitle}" --title "${txtextrasmenu}" --checklist "" 0 0 0 \
 		"${options[@]}" \
@@ -2146,6 +2441,35 @@ archextrasmenu(){
 	fi
 	if [[ "${pkgs}" == *"networkmanager"* ]]; then
 		archchroot enablenetworkmanager
+	fi
+	if [[ "${pkgs}" == *"fastfetch"* ]]; then
+		echo "Configuring fastfetch to autostart in bashrc..."
+		local ff_snippet='
+# Autostart fastfetch on interactive shell launch
+if [[ $- == *i* ]] && command -v fastfetch >/dev/null 2>&1; then
+    fastfetch
+fi'
+		mkdir -p /mnt/etc/skel
+		if [ ! -f /mnt/etc/bash.bashrc ]; then
+			echo "${ff_snippet}" > /mnt/etc/bash.bashrc
+		elif ! grep -q "Autostart fastfetch" /mnt/etc/bash.bashrc; then
+			echo "${ff_snippet}" >> /mnt/etc/bash.bashrc
+		fi
+		if [ -f /mnt/etc/skel/.bashrc ] && ! grep -q "Autostart fastfetch" /mnt/etc/skel/.bashrc; then
+			echo "${ff_snippet}" >> /mnt/etc/skel/.bashrc
+		fi
+		if [ -f /mnt/root/.bashrc ] && ! grep -q "Autostart fastfetch" /mnt/root/.bashrc; then
+			echo "${ff_snippet}" >> /mnt/root/.bashrc
+		fi
+		for u_home in /mnt/home/*; do
+			if [ -d "${u_home}" ]; then
+				local u_name=$(basename "${u_home}")
+				if [ -f "${u_home}/.bashrc" ] && ! grep -q "Autostart fastfetch" "${u_home}/.bashrc"; then
+					echo "${ff_snippet}" >> "${u_home}/.bashrc"
+					arch-chroot /mnt chown "${u_name}" "/home/${u_name}/.bashrc" 2>/dev/null || true
+				fi
+			fi
+		done
 	fi
 	pressanykey
 }
@@ -2350,6 +2674,8 @@ loadstrings(){
 	txtbootloaderrefindmenu="rEFInd Install Menu"
 	
 	txtextrasmenu="Extras"
+	txtcachyosrepo="CachyOS Repository"
+	txtcachyostweaks="CachyOS Tweaks (adios, sysctl, mkinitcpio)"
 
 	txtoptional="Optional"
 	txtrecommandeasyinst="Recommanded for easy install"

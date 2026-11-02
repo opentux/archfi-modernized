@@ -106,6 +106,8 @@ txtbootloadersystemdmenu="Systemd-boot Install Menu"
 txtbootloaderrefindmenu="rEFInd Install Menu"
 
 txtextrasmenu="Extras"
+txtcachyosrepo="CachyOS Repository"
+txtcachyostweaks="CachyOS Tweaks (adios, sysctl, mkinitcpio)"
 
 txtoptional="Optional"
 txtrecommandeasyinst="Recommanded for easy install"
