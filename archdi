@@ -1181,6 +1181,19 @@ EOF
         ;;
     esac
 
+    echo "Configuring allowed CPU architectures in /etc/pacman.conf..."
+    case "${cachy_arch}" in
+        "v4")
+            sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64 x86_64_v3 x86_64_v4/' /etc/pacman.conf
+        ;;
+        "v3")
+            sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64 x86_64_v3/' /etc/pacman.conf
+        ;;
+        *)
+            sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64/' /etc/pacman.conf
+        ;;
+    esac
+
     echo "Adding CachyOS repository sections to /etc/pacman.conf..."
     sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /etc/pacman.conf 2>/dev/null || true
     sed -i '/^\[core\]/e cat /tmp/cachyos-repos.conf' /etc/pacman.conf
@@ -1196,6 +1209,8 @@ EOF
         mirrorlist_pkgs="cachyos-mirrorlist cachyos-v3-mirrorlist"
     fi
     pacman -S --needed --noconfirm cachyos-keyring ${mirrorlist_pkgs} 2>/dev/null || true
+    sed -i 's|/\$arch_v3/|/x86_64_v3/|g; s|/\$arch/|/x86_64_v3/|g' /etc/pacman.d/cachyos-v3-mirrorlist 2>/dev/null || true
+    sed -i 's|/\$arch_v4/|/x86_64_v4/|g; s|/\$arch/|/x86_64_v4/|g' /etc/pacman.d/cachyos-v4-mirrorlist 2>/dev/null || true
 }
 
 cachyos_install_kernel_and_settings(){
@@ -1290,6 +1305,8 @@ cachyos_rate_mirrors(){
         pacman -S --needed --noconfirm cachyos-rate-mirrors 2>/dev/null || true
         if command -v cachyos-rate-mirrors >/dev/null 2>&1; then
             cachyos-rate-mirrors
+            sed -i 's|/\$arch_v3/|/x86_64_v3/|g; s|/\$arch/|/x86_64_v3/|g' /etc/pacman.d/cachyos-v3-mirrorlist 2>/dev/null || true
+            sed -i 's|/\$arch_v4/|/x86_64_v4/|g; s|/\$arch/|/x86_64_v4/|g' /etc/pacman.d/cachyos-v4-mirrorlist 2>/dev/null || true
             return 0
         fi
     fi

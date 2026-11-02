@@ -1106,6 +1106,19 @@ EOF
 		;;
 	esac
 
+	echo "Configuring allowed CPU architectures in /etc/pacman.conf..."
+	case "${cachy_arch}" in
+		"v4")
+			sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64 x86_64_v3 x86_64_v4/' /etc/pacman.conf
+		;;
+		"v3")
+			sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64 x86_64_v3/' /etc/pacman.conf
+		;;
+		*)
+			sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64/' /etc/pacman.conf
+		;;
+	esac
+
 	echo "Adding CachyOS repository sections to /etc/pacman.conf..."
 	sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /etc/pacman.conf 2>/dev/null || true
 	sed -i '/^\[core\]/e cat /tmp/cachyos-repos.conf' /etc/pacman.conf
@@ -1255,6 +1268,13 @@ installbase(){
 	if grep -q "\[cachyos" /etc/pacman.conf; then
 		mkdir -p /mnt/etc/pacman.d
 		cp -f /etc/pacman.d/cachyos* /mnt/etc/pacman.d/ 2>/dev/null || true
+		sed -i 's|/\$arch_v3/|/x86_64_v3/|g; s|/\$arch/|/x86_64_v3/|g' /mnt/etc/pacman.d/cachyos-v3-mirrorlist 2>/dev/null || true
+		sed -i 's|/\$arch_v4/|/x86_64_v4/|g; s|/\$arch/|/x86_64_v4/|g' /mnt/etc/pacman.d/cachyos-v4-mirrorlist 2>/dev/null || true
+		local host_arch_line
+		host_arch_line=$(grep "^Architecture" /etc/pacman.conf | head -n 1)
+		if [ -n "${host_arch_line}" ]; then
+			sed -i "s/^#*Architecture\s*=.*/${host_arch_line}/" /mnt/etc/pacman.conf
+		fi
 		sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /mnt/etc/pacman.conf 2>/dev/null || true
 		sed -n '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!p }' /etc/pacman.conf > /tmp/mnt-cachyos.conf
 		sed -i '/^\[core\]/e cat /tmp/mnt-cachyos.conf' /mnt/etc/pacman.conf
