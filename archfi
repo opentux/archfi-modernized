@@ -981,13 +981,8 @@ paralleldownloads() {
 
 cachyos_enable_repo_archfi(){
 	echo "=== Enabling CachyOS Repositories (Live ISO Safe Mode) ==="
-	if grep -q "\[cachyos" /etc/pacman.conf; then
-		echo "CachyOS repository already active in /etc/pacman.conf"
-		return 0
-	fi
-
 	echo "Detecting CPU architecture..."
-	local cachy_arch="standard"
+	cachy_arch="standard"
 	if /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v4 (supported"; then
 		cachy_arch="v4"
 	elif /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v3 (supported"; then
@@ -1004,38 +999,64 @@ cachyos_enable_repo_archfi(){
 	pacman-key --recv-keys F3B607488DB35A47 --keyserver hkps://keyserver.ubuntu.com 2>/dev/null || true
 	pacman-key --lsign-key F3B607488DB35A47 2>/dev/null || true
 
-	echo "Setting up /etc/pacman.d/cachyos-mirrorlist..."
+	echo "Setting up CachyOS mirrorlists in /etc/pacman.d/..."
 	mkdir -p /etc/pacman.d
 	cat << 'EOF' > /etc/pacman.d/cachyos-mirrorlist
-Server = https://mirror.cachyos.org/repo/$arch/$repo
-Server = https://fastmirror.cachyos.org/repo/$arch/$repo
-Server = https://in-mirror.cachyos.org/repo/$arch/$repo
+Server = https://mirror.cachyos.org/repo/x86_64/$repo
+Server = https://fastmirror.cachyos.org/repo/x86_64/$repo
+Server = https://in-mirror.cachyos.org/repo/x86_64/$repo
+Server = https://cdn77.cachyos.org/repo/x86_64/$repo
 EOF
 
-	echo "Adding CachyOS repository sections to /etc/pacman.conf..."
 	case "${cachy_arch}" in
 		"v4")
+			cat << 'EOF' > /etc/pacman.d/cachyos-v4-mirrorlist
+Server = https://mirror.cachyos.org/repo/x86_64_v4/$repo
+Server = https://fastmirror.cachyos.org/repo/x86_64_v4/$repo
+Server = https://in-mirror.cachyos.org/repo/x86_64_v4/$repo
+Server = https://cdn77.cachyos.org/repo/x86_64_v4/$repo
+EOF
 			cat << 'EOF' > /tmp/cachyos-repos.conf
 [cachyos-v4]
-Include = /etc/pacman.d/cachyos-mirrorlist
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+
 [cachyos-core-v4]
-Include = /etc/pacman.d/cachyos-mirrorlist
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+
 [cachyos-extra-v4]
-Include = /etc/pacman.d/cachyos-mirrorlist
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+
 [cachyos]
+SigLevel = PackageRequired
 Include = /etc/pacman.d/cachyos-mirrorlist
 
 EOF
 		;;
 		"v3")
+			cat << 'EOF' > /etc/pacman.d/cachyos-v3-mirrorlist
+Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo
+Server = https://fastmirror.cachyos.org/repo/x86_64_v3/$repo
+Server = https://in-mirror.cachyos.org/repo/x86_64_v3/$repo
+Server = https://cdn77.cachyos.org/repo/x86_64_v3/$repo
+EOF
 			cat << 'EOF' > /tmp/cachyos-repos.conf
 [cachyos-v3]
-Include = /etc/pacman.d/cachyos-mirrorlist
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+
 [cachyos-core-v3]
-Include = /etc/pacman.d/cachyos-mirrorlist
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+
 [cachyos-extra-v3]
-Include = /etc/pacman.d/cachyos-mirrorlist
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+
 [cachyos]
+SigLevel = PackageRequired
 Include = /etc/pacman.d/cachyos-mirrorlist
 
 EOF
@@ -1043,16 +1064,23 @@ EOF
 		*)
 			cat << 'EOF' > /tmp/cachyos-repos.conf
 [cachyos]
+SigLevel = PackageRequired
 Include = /etc/pacman.d/cachyos-mirrorlist
+
 [cachyos-core]
+SigLevel = PackageRequired
 Include = /etc/pacman.d/cachyos-mirrorlist
+
 [cachyos-extra]
+SigLevel = PackageRequired
 Include = /etc/pacman.d/cachyos-mirrorlist
 
 EOF
 		;;
 	esac
 
+	echo "Adding CachyOS repository sections to /etc/pacman.conf..."
+	sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /etc/pacman.conf 2>/dev/null || true
 	sed -i '/^\[core\]/e cat /tmp/cachyos-repos.conf' /etc/pacman.conf
 	rm -f /tmp/cachyos-repos.conf
 
@@ -1077,6 +1105,12 @@ installbase(){
 		if [ "${chosen_kernel}" = "linux-cachyos" ]; then
 			clear
 			cachyos_enable_repo_archfi
+			pkgs+=" cachyos-keyring cachyos-mirrorlist"
+			if [ "${cachy_arch}" = "v4" ]; then
+				pkgs+=" cachyos-v4-mirrorlist"
+			elif [ "${cachy_arch}" = "v3" ]; then
+				pkgs+=" cachyos-v3-mirrorlist"
+			fi
 		fi
 	else
 		return 1
@@ -1171,19 +1205,31 @@ installbase(){
 	clear
 	echo "pacstrap /mnt ${pkgs}"
 	pacstrap /mnt ${pkgs}
+	local pacstrap_status=$?
+	if [ ${pacstrap_status} -ne 0 ]; then
+		echo ""
+		echo "ERROR: pacstrap failed with exit code ${pacstrap_status}."
+		echo "The base system could not be installed."
+		pressanykey
+		return 1
+	fi
+
 	echo "Optimizing /mnt/etc/pacman.conf (Color, ILoveCandy, ParallelDownloads=10, Multilib)..."
 	optimize_pacman "/mnt/etc/pacman.conf"
 	if [ ! -z $numpkg ]; then
 		sed -i "s/.*ParallelDownloads.*/ParallelDownloads = ${numpkg}/" /mnt/etc/pacman.conf	
 	fi	
-	if [ -f /etc/pacman.d/cachyos-mirrorlist ]; then
+	if grep -q "\[cachyos" /etc/pacman.conf; then
 		mkdir -p /mnt/etc/pacman.d
-		cp -f /etc/pacman.d/cachyos-mirrorlist /mnt/etc/pacman.d/
-	fi
-	if grep -q "\[cachyos" /etc/pacman.conf && ! grep -q "\[cachyos" /mnt/etc/pacman.conf; then
+		cp -f /etc/pacman.d/cachyos* /mnt/etc/pacman.d/ 2>/dev/null || true
+		sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /mnt/etc/pacman.conf 2>/dev/null || true
 		sed -n '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!p }' /etc/pacman.conf > /tmp/mnt-cachyos.conf
 		sed -i '/^\[core\]/e cat /tmp/mnt-cachyos.conf' /mnt/etc/pacman.conf
 		rm -f /tmp/mnt-cachyos.conf
+		echo "Populating CachyOS keys in target system..."
+		arch-chroot /mnt pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com 2>/dev/null || true
+		arch-chroot /mnt pacman-key --lsign-key F3B607488DB35A47 2>/dev/null || true
+		arch-chroot /mnt pacman-key --populate cachyos 2>/dev/null || true
 	fi	
 
 	echo "Enabling NetworkManager service in /mnt..."
