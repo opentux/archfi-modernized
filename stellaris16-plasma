@@ -1,0 +1,1537 @@
+#!/bin/bash
+
+# ==============================================================================
+# TUXEDO Stellaris 16 — Automated Arch Linux + CachyOS + KDE Plasma 6 Installer
+# ==============================================================================
+# Hardware Target :
+#   - TUXEDO Stellaris 16
+#   - CPU  : Intel Core Ultra 9 275HX (Arrow Lake, x86_64_v3)
+#   - RAM  : 96 GB DDR5 (ZRAM zstd configured automatically)
+#   - Disk : Samsung 990 Pro NVMe (Btrfs / Ext4 + CachyOS ADIOS I/O Scheduler)
+#   - GPU  : Hybrid Intel Xe + NVIDIA RTX 5090 Laptop 175W (Advanced Optimus / MUX)
+#            with nvidia-open, CUDA, PRIME, VA-API, and Dynamic Boost (nvidia-powerd)
+#   - DE   : KDE Plasma 6 (Full French fr_FR.UTF-8 & AZERTY fr keyboard everywhere)
+# ==============================================================================
+
+DESKTOP_FLAVOR="plasma"
+apptitle="TUXEDO Stellaris 16 (275HX / RTX 5090) - Auto Install [KDE Plasma 6]"
+scriptdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+skipfont="0"
+fspkgs=""
+btrfs_root_subvols=0
+btrfs_has_snapshots=1
+btrfs_opts="rw,noatime,ssd,commit=120,space_cache=v2,compress=zstd:1"
+btrfs_opts_configured=0
+bootdev=""
+swapdev=""
+rootdev=""
+homedev=""
+realrootdev=""
+luksroot=0
+luksdrive=0
+luksrootuuid=""
+crypttab=""
+isnvme=0
+eficomputer=1
+efimode=1
+cachy_arch="v3"
+
+# User credentials collected right after mounting
+target_hostname="stellaris16"
+target_user=""
+target_user_pass=""
+target_root_pass=""
+target_user_nopasswd="1"
+target_bootloader="grub"
+
+# --------------------------------------------------------
+# Helpers
+# --------------------------------------------------------
+pressanykey(){
+	read -n1 -p "${txtpressanykey}"
+	echo ""
+}
+
+get_partition_name(){
+	local dev="${1}"
+	local pnum="${2}"
+	if [[ "${dev}" =~ [0-9]$ ]]; then
+		echo "${dev}p${pnum}"
+	else
+		echo "${dev}${pnum}"
+	fi
+}
+
+get_parent_disk(){
+	local part="${1}"
+	local pkname
+	pkname=$(lsblk -no pkname "${part}" 2>/dev/null | head -n 1)
+	if [ -n "${pkname}" ]; then
+		echo "/dev/${pkname}"
+	elif [[ "${part}" =~ ^(/dev/nvme[0-9]+n[0-9]+)p[0-9]+$ ]]; then
+		echo "${BASH_REMATCH[1]}"
+	elif [[ "${part}" =~ ^(/dev/mmcblk[0-9]+)p[0-9]+$ ]]; then
+		echo "${BASH_REMATCH[1]}"
+	else
+		echo "${part%%[0-9]*}"
+	fi
+}
+
+optimize_pacman(){
+	local conf="${1:-/etc/pacman.conf}"
+	if [ -f "$conf" ]; then
+		sed -i 's/^#Color/Color/' "$conf"
+		grep -q "^Color" "$conf" || sed -i '/^#Misc options/a Color' "$conf"
+		grep -q "ILoveCandy" "$conf" || sed -i '/Color/a ILoveCandy' "$conf"
+		sed -i 's/^#VerbosePkgLists/VerbosePkgLists/' "$conf"
+		if grep -q "ParallelDownloads" "$conf"; then
+			sed -i 's/.*ParallelDownloads.*/ParallelDownloads = 10/' "$conf"
+		else
+			sed -i '/^Color/a ParallelDownloads = 10' "$conf"
+		fi
+		if grep -q "^#\[multilib\]" "$conf"; then
+			sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$conf"
+		elif ! grep -q "^\[multilib\]" "$conf"; then
+			cat << 'EOF' >> "$conf"
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+EOF
+		fi
+	fi
+}
+
+load_french_strings(){
+	locale=fr_FR.UTF-8
+	keymap="fr"
+
+	txtexit="Quitter"
+	txtback="Retour"
+	txtignore="Ignorer"
+
+	txtmainmenu="Menu Principal — TUXEDO Stellaris 16 (KDE Plasma 6)"
+	txtdiskpartmenu="Partitionner le disque"
+	txtselectpartsmenu="Sélectionner les partitions et Lancer l'installation"
+	txtreboot="Redémarrer"
+
+	txtautoparts="Partitions automatique"
+	txteditparts="Modifier les partitions"
+
+	txtautopartsconfirm="Périphérique sélectionné : %1\n\nToutes les données seront effacées ! \n\nContinuer ?"
+	txtcreateswap="Créer une partition swap ?\n\n(Choisissez 'Non' pour privilégier ZRAM / swap en RAM sur vos 96 Go)"
+
+	txtautopartclear="Effacement des tables de partitions"
+	txtautopartcreate="Création de la partition %1"
+	txthybridpartcreate="Configuration de l'MBR hybride"
+
+	txtselectdevice="Sélectionner le périphérique %1 :"
+	txtselecteddevices="Périphériques sélectionnés :"
+
+	txtformatmountmenu="Formatage et Montage"
+	txtformatdevices="Formater les périphériques"
+	txtformatdevice="Formater le périphérique"
+	txtformatbootdevice="Formater la partition BOOT / EFI"
+	txtformatrootdevice="Formater la partition ROOT (/)"
+	txtmount="Monter et Lancer l'installation automatique"
+	txtunmount="Démonter"
+	txtmountdesc="Installation Full Auto Stellaris 16"
+
+	txtformatdeviceconfirm="Attention, toutes les données sur les périphériques sélectionnés seront effacées ! \nFormater les périphériques ?"
+
+	txtselectpartformat="Sélectionner le format de partition pour %1 :"
+	txtselectpartformatboot="Sélectionner le système de fichiers pour la partition BOOT / EFI %1 :"
+	txtselectpartformatroot="Sélectionner le système de fichiers pour la partition ROOT %1 :"
+	txtformatingpart="Formatage de la partition %1 en"
+	txtcreateluksdevice="Création du périphérique LUKS :"
+	txtopenluksdevice="Ouverture du périphérique LUKS :"
+	txtluksdevicecreated="Périphérique LUKS créé !"
+
+	txtpressanykey="Appuyez sur une touche pour continuer."
+
+	txtbtrfslayout="Configuration Btrfs"
+	txtbtrfssubvols="Sous-volumes avec snapshots (@, @home, @snapshots, @var_log, @pkg)"
+	txtbtrfssubvolsnosnap="Sous-volumes sans snapshots (@, @home, @var_log, @pkg - Lab / nodatacow)"
+	txtbtrfssimple="Simple (sous-volume @root uniquement)"
+	txtbtrfsconfirm="Choisir l'architecture Btrfs pour %1 :"
+	txtbtrfsmountopts="Options de montage Btrfs"
+	txtbtrfsmountoptsdesc="Sélectionner les options de montage pour Btrfs (noatime, ssd et commit=120 sont activés par défaut) :"
+	txtbtrfsoptcompress="Compression ZSTD niveau 1"
+	txtbtrfsoptnodatacow="Désactiver le Copy-on-Write (nodatacow)"
+	txtbtrfsoptnodatasum="Désactiver les sommes de contrôle (nodatasum)"
+}
+
+choose_btrfs_mount_opts(){
+	options_btrfs_opts=()
+	options_btrfs_opts+=("compress=zstd:1" "${txtbtrfsoptcompress}" on)
+	options_btrfs_opts+=("nodatacow" "${txtbtrfsoptnodatacow}" off)
+	options_btrfs_opts+=("nodatasum" "${txtbtrfsoptnodatasum}" off)
+	sel_btrfs_opts=$(dialog --backtitle "${apptitle}" --title "${txtbtrfsmountopts}" --checklist "${txtbtrfsmountoptsdesc}" 0 0 0 \
+		"${options_btrfs_opts[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ "$?" = "0" ]; then
+		btrfs_opts="rw,noatime,ssd,commit=120,space_cache=v2"
+		for opt in ${sel_btrfs_opts}; do
+			clean_opt=$(echo ${opt} | sed 's/"//g')
+			btrfs_opts="${btrfs_opts},${clean_opt}"
+		done
+		btrfs_opts_configured=1
+	fi
+}
+
+# --------------------------------------------------------
+# Main Menu (Partitioning -> Select/Format/Mount -> Auto Install)
+# --------------------------------------------------------
+mainmenu(){
+	if [ "${1}" = "" ]; then
+		nextitem="${txtdiskpartmenu}"
+	else
+		nextitem=${1}
+	fi
+	options=()
+	options+=("${txtdiskpartmenu}" "Partitionnement auto (EFI 2Go) ou cfdisk/cgdisk")
+	options+=("${txtselectpartsmenu}" "Formatage, options Btrfs & Installation Full Auto")
+	options+=("${txtreboot}" "")
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtmainmenu}" --cancel-button "${txtexit}" --default-item "${nextitem}" --menu "" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ "$?" = "0" ]; then
+		case ${sel} in
+			"${txtdiskpartmenu}")
+				diskpartmenu
+				nextitem="${txtselectpartsmenu}"
+			;;
+			"${txtselectpartsmenu}")
+				selectparts
+				nextitem="${txtreboot}"
+			;;
+			"${txtreboot}")
+				rebootpc
+				nextitem="${txtreboot}"
+			;;
+		esac
+		mainmenu "${nextitem}"
+	else
+		clear
+	fi
+}
+
+rebootpc(){
+	if (dialog --backtitle "${apptitle}" --title "${txtreboot}" --defaultno --yesno "${txtreboot} ?" 0 0) then
+		clear
+		umount -R /mnt 2>/dev/null || true
+		reboot
+	fi
+}
+
+# --------------------------------------------------------
+# Disk Partitioning (Exact same behavior as archfi)
+# --------------------------------------------------------
+selectdisk(){
+	items=$(lsblk -d -p -n -l -o NAME,SIZE -e 7,11)
+	options=()
+	IFS_ORIG=$IFS
+	IFS=$'\n'
+	for item in ${items}; do
+		options+=("${item}" "")
+	done
+	IFS=$IFS_ORIG
+	result=$(dialog --backtitle "${apptitle}" --title "${1}" --menu "" 0 0 0 "${options[@]}" 3>&1 1>&2 2>&3)
+	if [ "$?" != "0" ]; then
+		return 1
+	fi
+	echo ${result%%\ *}
+	return 0
+}
+
+diskpartmenu(){
+	if [ "${1}" = "" ]; then
+		nextitem="."
+	else
+		nextitem=${1}
+	fi
+	options=()
+	if [ "${eficomputer}" == "0" ]; then
+		options+=("${txtautoparts} (gpt)" "")
+		options+=("${txtautoparts} (dos)" "")
+	else
+		options+=("${txtautoparts} (gpt,efi)" "")
+		options+=("${txtautoparts} (gpt)" "")
+		options+=("${txtautoparts} (dos)" "")
+		options+=("${txtautoparts} (gpt,bios+efi,noswap)" "")
+	fi
+	options+=("${txteditparts} (cfdisk)" "")
+	options+=("${txteditparts} (cgdisk)" "")
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtdiskpartmenu}" --cancel-button "${txtback}" --default-item "${nextitem}" --menu "" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ "$?" = "0" ]; then
+		case ${sel} in
+			"${txtautoparts} (dos)")
+				diskpartautodos
+				nextitem="${txtautoparts} (dos)"
+			;;
+			"${txtautoparts} (gpt)")
+				diskpartautogpt
+				nextitem="${txtautoparts} (gpt)"
+			;;
+			"${txtautoparts} (gpt,efi)")
+				diskpartautoefi
+				nextitem="${txtautoparts} (gpt,efi)"
+			;;
+			"${txtautoparts} (gpt,bios+efi,noswap)")
+				diskpartautoefiusb
+				nextitem="${txtautoparts} (gpt,bios+efi,noswap)"
+			;;
+			"${txteditparts} (cfdisk)")
+				diskpartcfdisk
+				nextitem="${txteditparts} (cfdisk)"
+			;;
+			"${txteditparts} (cgdisk)")
+				diskpartcgdisk
+				nextitem="${txteditparts} (cgdisk)"
+			;;
+		esac
+		diskpartmenu "${nextitem}"
+	fi
+}
+
+diskpartautodos(){
+	device=$(selectdisk "${txtautoparts} (dos)")
+	if [ "$?" = "0" ]; then
+		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (dos)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			want_swap="0"
+			if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (dos)" --defaultno --yesno "${txtcreateswap}" 0 0); then
+				want_swap="1"
+			fi
+			clear
+			echo "${txtautopartclear}"
+			parted ${device} mklabel msdos
+			sleep 1
+			echo "${txtautopartcreate//%1/boot (1GB)}"
+			echo -e "n\np\n1\n\n+1024M\na\nw" | fdisk ${device}
+			sleep 1
+			if [ "${want_swap}" = "1" ]; then
+				echo "${txtautopartcreate//%1/swap}"
+				swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
+				swapsize=$((${swapsize}/1000))"M"
+				echo -e "n\np\n2\n\n+${swapsize}\nt\n2\n82\nw" | fdisk ${device}
+				sleep 1
+				echo "${txtautopartcreate//%1/root}"
+				echo -e "n\np\n3\n\n\nw" | fdisk ${device}
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=$(get_partition_name "${device}" 2)
+				rootdev=$(get_partition_name "${device}" 3)
+			else
+				echo "${txtautopartcreate//%1/root}"
+				echo -e "n\np\n2\n\n\nw" | fdisk ${device}
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=""
+				rootdev=$(get_partition_name "${device}" 2)
+			fi
+			sleep 1
+			echo ""
+			pressanykey
+			efimode="0"
+		fi
+	fi
+}
+
+diskpartautogpt(){
+	device=$(selectdisk "${txtautoparts} (gpt)")
+	if [ "$?" = "0" ]; then
+		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			want_swap="0"
+			if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt)" --defaultno --yesno "${txtcreateswap}" 0 0); then
+				want_swap="1"
+			fi
+			clear
+			echo "${txtautopartclear}"
+			parted ${device} mklabel gpt
+			echo "${txtautopartcreate//%1/BIOS boot}"
+			sgdisk ${device} -n=1:0:+31M -t=1:ef02 -c=0:mbrboot
+			echo "${txtautopartcreate//%1/boot (2GB)}"
+			sgdisk ${device} -n=2:0:+2048M -c=0:boot
+			if [ "${want_swap}" = "1" ]; then
+				echo "${txtautopartcreate//%1/swap}"
+				swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
+				swapsize=$((${swapsize}/1000))"M"
+				sgdisk ${device} -n=3:0:+${swapsize} -t=3:8200 -c=0:swap
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=4:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 2)
+				swapdev=$(get_partition_name "${device}" 3)
+				rootdev=$(get_partition_name "${device}" 4)
+			else
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=3:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 2)
+				swapdev=""
+				rootdev=$(get_partition_name "${device}" 3)
+			fi
+			echo ""
+			pressanykey
+			efimode="0"
+		fi
+	fi
+}
+
+diskpartautoefi(){
+	device=$(selectdisk "${txtautoparts} (gpt,efi)")
+	if [ "$?" = "0" ]; then
+		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt,efi)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			want_swap="0"
+			if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt,efi)" --defaultno --yesno "${txtcreateswap}" 0 0); then
+				want_swap="1"
+			fi
+			clear
+			echo "${txtautopartclear}"
+			parted ${device} mklabel gpt
+			echo "${txtautopartcreate//%1/EFI boot (2GB)}"
+			sgdisk ${device} -n=1:0:+2048M -t=1:ef00 -c=0:boot
+			if [ "${want_swap}" = "1" ]; then
+				echo "${txtautopartcreate//%1/swap}"
+				swapsize=$(cat /proc/meminfo | grep MemTotal | awk '{ print $2 }')
+				swapsize=$((${swapsize}/1000))"M"
+				sgdisk ${device} -n=2:0:+${swapsize} -t=2:8200 -c=0:swap
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=3:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=$(get_partition_name "${device}" 2)
+				rootdev=$(get_partition_name "${device}" 3)
+			else
+				echo "${txtautopartcreate//%1/root}"
+				sgdisk ${device} -n=2:0:0 -c=0:root
+				bootdev=$(get_partition_name "${device}" 1)
+				swapdev=""
+				rootdev=$(get_partition_name "${device}" 2)
+			fi
+			echo ""
+			pressanykey
+			efimode="1"
+		fi
+	fi
+}
+
+diskpartautoefiusb(){
+	device=$(selectdisk "${txtautoparts} (gpt,efi)")
+	if [ "$?" = "0" ]; then
+		if (dialog --backtitle "${apptitle}" --title "${txtautoparts} (gpt,efi)" --defaultno --yesno "${txtautopartsconfirm//%1/${device}}" 0 0) then
+			clear
+			echo "${txtautopartclear}"
+			parted ${device} mklabel gpt
+			echo "${txtautopartcreate//%1/EFI boot (2GB)}"
+			sgdisk ${device} -n=1:0:+2048M -t=1:ef00
+			echo "${txtautopartcreate//%1/BIOS boot}"
+			sgdisk ${device} -n=2:0:+31M -t=2:ef02
+			echo "${txtautopartcreate//%1/root}"
+			sgdisk ${device} -n=3:0:0
+			echo "${txthybridpartcreate}"
+			echo -e "r\nh\n3\nN\n\nY\nN\nw\nY\n" | gdisk ${device}
+			echo ""
+			pressanykey
+			bootdev=$(get_partition_name "${device}" 1)
+			swapdev=
+			rootdev=$(get_partition_name "${device}" 3)
+			efimode="2"
+		fi
+	fi
+}
+
+diskpartcfdisk(){
+	device=$(selectdisk "${txteditparts} (cfdisk)")
+	if [ "$?" = "0" ]; then
+		clear
+		cfdisk ${device}
+	fi
+}
+
+diskpartcgdisk(){
+	device=$(selectdisk "${txteditparts} (cgdisk)")
+	if [ "$?" = "0" ]; then
+		clear
+		cgdisk ${device}
+	fi
+}
+
+# --------------------------------------------------------
+# Select, Format & Mount Partitions
+# --------------------------------------------------------
+selectparts(){
+	items=$(lsblk -p -n -l -o NAME -e 7,11)
+	options=()
+	for item in ${items}; do
+		options+=("${item}" "")
+	done
+
+	bootdev=$(dialog --backtitle "${apptitle}" --title "${txtselectpartsmenu}" --default-item "${bootdev}" --menu "${txtselectdevice//%1/boot}" 0 0 0 \
+		"none" "-" \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	else
+		if [ "${bootdev}" = "none" ]; then
+			bootdev=
+		fi
+	fi
+
+	swapdev=$(dialog --backtitle "${apptitle}" --title "${txtselectpartsmenu}" --default-item "${swapdev}" --menu "${txtselectdevice//%1/swap}" 0 0 0 \
+		"none" "-" \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	else
+		if [ "${swapdev}" = "none" ]; then
+			swapdev=
+		fi
+	fi
+
+	rootdev=$(dialog --backtitle "${apptitle}" --title "${txtselectpartsmenu}" --default-item "${rootdev}" --menu "${txtselectdevice//%1/root}" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	fi
+	realrootdev=${rootdev}
+
+	homedev=$(dialog --backtitle "${apptitle}" --title "${txtselectpartsmenu}" --menu "${txtselectdevice//%1/home}" 0 0 0 \
+		"none" "-" \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	else
+		if [ "${homedev}" = "none" ]; then
+			homedev=
+		fi
+	fi
+
+	msg="${txtselecteddevices}\n\n"
+	msg=${msg}"boot : "${bootdev}"\n"
+	msg=${msg}"swap : "${swapdev}"\n"
+	msg=${msg}"root : "${rootdev}"\n"
+	msg=${msg}"home : "${homedev}"\n\n"
+	if (dialog --backtitle "${apptitle}" --title "${txtselectpartsmenu}" --yesno "${msg}" 0 0) then
+		isnvme=0
+		if [ "${bootdev::8}" == "/dev/nvm" ] || [ "${rootdev::8}" == "/dev/nvm" ]; then
+			isnvme=1
+		fi
+		mountmenu
+	fi
+}
+
+mountmenu(){
+	if [ "${1}" = "" ]; then
+		nextitem="${txtformatdevices}"
+	else
+		nextitem=${1}
+	fi
+	options=()
+	options+=("${txtformatdevices}" "")
+	options+=("${txtmount}" "${txtmountdesc}")
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtformatmountmenu}" --cancel-button "${txtback}" --default-item "${nextitem}" --menu "" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ "$?" = "0" ]; then
+		case ${sel} in
+			"${txtformatdevices}")
+				formatdevices
+				nextitem="${txtmount}"
+			;;
+			"${txtmount}")
+				mountparts_and_run_auto
+				return 0
+			;;
+		esac
+		mountmenu "${nextitem}"
+	fi
+}
+
+formatdevices(){
+	if (dialog --backtitle "${apptitle}" --title "${txtformatdevices}" --defaultno --yesno "${txtformatdeviceconfirm}" 0 0); then
+		fspkgs=""
+		if [ ! "${bootdev}" = "" ]; then
+			formatbootdevice boot ${bootdev} || return 1
+		fi
+		if [ ! "${swapdev}" = "" ]; then
+			formatswapdevice swap ${swapdev} || return 1
+		fi
+		formatdevice root ${rootdev} || return 1
+		if [ ! "${homedev}" = "" ]; then
+			formatdevice home ${homedev} || return 1
+		fi
+	fi
+}
+
+formatbootdevice(){
+	options=()
+	if [ "${efimode}" = "1" ] || [ "${efimode}" = "2" ] || [ "${eficomputer}" = "1" ]; then
+		options+=("fat32" "(EFI System Partition - Requis)")
+	else
+		options+=("ext4" "(Recommandé pour BIOS boot)")
+		options+=("ext2" "")
+		options+=("ext3" "")
+		options+=("fat32" "")
+	fi
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtformatbootdevice}" --menu "${txtselectpartformatboot//%1/${1} (${2})}" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	fi
+	clear
+	echo "${txtformatingpart//%1/${2}} ${sel}"
+	echo "----------------------------------------------"
+	case ${sel} in
+		ext2) mkfs.ext2 ${2};;
+		ext3) mkfs.ext3 ${2};;
+		ext4) mkfs.ext4 ${2};;
+		fat32)
+			fspkgs="${fspkgs[@]} dosfstools"
+			mkfs.fat -F32 ${2}
+		;;
+	esac
+	echo ""
+	pressanykey
+}
+
+formatswapdevice(){
+	options=()
+	options+=("swap" "")
+	sel=$(dialog --backtitle "${apptitle}" --title "${txtformatdevice}" --menu "${txtselectpartformat//%1/${1} (${2})}" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	fi
+	clear
+	echo "${txtformatingpart//%1/${swapdev}} swap"
+	echo "----------------------------------------------------"
+	mkswap ${swapdev}
+	echo ""
+	pressanykey
+	clear
+}
+
+formatdevice(){
+	options=()
+	options+=("btrfs" "(Moderne - Sous-volumes, compression zstd, mode Lab nodatacow)")
+	options+=("ext4" "(Traditionnel stable)")
+	options+=("xfs" "(Haute performance)")
+	options+=("f2fs" "(Optimisé Flash/NVMe)")
+	options+=("ext3" "")
+	options+=("ext2" "")
+	options+=("jfs" "")
+	if [ ! "${3}" = "noluks" ]; then
+		options+=("luks" "Chiffrement LUKS")
+	fi
+
+	local title="${txtformatdevice}"
+	local prompt="${txtselectpartformat//%1/${1} (${2})}"
+	if [ "${1}" = "root" ]; then
+		title="${txtformatrootdevice}"
+		prompt="${txtselectpartformatroot//%1/${1} (${2})}"
+	fi
+
+	sel=$(dialog --backtitle "${apptitle}" --title "${title}" --menu "${prompt}" 0 0 0 \
+		"${options[@]}" \
+		3>&1 1>&2 2>&3)
+	if [ ! "$?" = "0" ]; then
+		return 1
+	fi
+	clear
+	echo "${txtformatingpart//%1/${2}} ${sel}"
+	echo "----------------------------------------------"
+	case ${sel} in
+		btrfs)
+			fspkgs="${fspkgs[@]} btrfs-progs"
+			echo "mkfs.btrfs -f ${2}"
+			mkfs.btrfs -f ${2}
+			choose_btrfs_mount_opts
+			if [ "${1}" = "root" ]; then
+				options_btrfs=()
+				if [[ "${btrfs_opts}" == *"nodatacow"* ]]; then
+					options_btrfs+=("subvolumes_nosnap" "${txtbtrfssubvolsnosnap}")
+					options_btrfs+=("subvolumes" "${txtbtrfssubvols}")
+				else
+					options_btrfs+=("subvolumes" "${txtbtrfssubvols}")
+					options_btrfs+=("subvolumes_nosnap" "${txtbtrfssubvolsnosnap}")
+				fi
+				options_btrfs+=("simple" "${txtbtrfssimple}")
+				btrfs_choice=$(dialog --backtitle "${apptitle}" --title "${txtbtrfslayout}" --menu "${txtbtrfsconfirm//%1/${2}}" 0 0 0 \
+					"${options_btrfs[@]}" \
+					3>&1 1>&2 2>&3)
+				if [ "${btrfs_choice}" = "subvolumes" ]; then
+					echo "Création des sous-volumes Btrfs (@, @home, @snapshots, @var_log, @pkg)..."
+					mount ${2} /mnt
+					btrfs subvolume create /mnt/@
+					btrfs subvolume create /mnt/@home
+					btrfs subvolume create /mnt/@snapshots
+					btrfs subvolume create /mnt/@var_log
+					btrfs subvolume create /mnt/@pkg
+					umount /mnt
+					btrfs_root_subvols=1
+					btrfs_has_snapshots=1
+				elif [ "${btrfs_choice}" = "subvolumes_nosnap" ]; then
+					echo "Création des sous-volumes Btrfs sans snapshots (@, @home, @var_log, @pkg)..."
+					mount ${2} /mnt
+					btrfs subvolume create /mnt/@
+					btrfs subvolume create /mnt/@home
+					btrfs subvolume create /mnt/@var_log
+					btrfs subvolume create /mnt/@pkg
+					umount /mnt
+					btrfs_root_subvols=1
+					btrfs_has_snapshots=0
+				else
+					mount ${2} /mnt
+					btrfs subvolume create /mnt/root
+					btrfs subvolume set-default /mnt/root
+					umount /mnt
+					btrfs_root_subvols=0
+					btrfs_has_snapshots=0
+				fi
+			fi
+		;;
+		ext4) mkfs.ext4 ${2};;
+		ext3) mkfs.ext3 ${2};;
+		ext2) mkfs.ext2 ${2};;
+		xfs)
+			fspkgs="${fspkgs[@]} xfsprogs"
+			mkfs.xfs -f ${2}
+		;;
+		f2fs)
+			fspkgs="${fspkgs[@]} f2fs-tools"
+			mkfs.f2fs -f ${2}
+		;;
+		jfs)
+			fspkgs="${fspkgs[@]} jfsutils"
+			mkfs.jfs -f ${2}
+		;;
+		luks)
+			echo "${txtcreateluksdevice}"
+			cryptsetup luksFormat ${2}
+			if [ ! "$?" = "0" ]; then
+				pressanykey
+				return 1
+			fi
+			echo "${txtopenluksdevice}"
+			cryptsetup luksOpen ${2} ${1}
+			if [ ! "$?" = "0" ]; then
+				pressanykey
+				return 1
+			fi
+			formatdevice ${1} /dev/mapper/${1} noluks
+			if [ "${1}" = "root" ]; then
+				realrootdev=${rootdev}
+				rootdev=/dev/mapper/${1}
+				luksroot=1
+				luksrootuuid=$(cryptsetup luksUUID ${2})
+			else
+				case ${1} in
+					home) homedev=/dev/mapper/${1} ;;
+				esac
+				luksdrive=1
+				crypttab="\n${1}    UUID=$(cryptsetup luksUUID ${2})    none"
+			fi
+			echo "${txtluksdevicecreated}"
+		;;
+	esac
+	echo ""
+	pressanykey
+}
+
+# --------------------------------------------------------
+# Mount Partitions -> Ask User Info -> Launch Unattended Install
+# --------------------------------------------------------
+mountparts_and_run_auto(){
+	clear
+	fstype=$(blkid -s TYPE -o value ${rootdev} 2>/dev/null)
+	if [ "${fstype}" = "btrfs" ]; then
+		mount ${rootdev} /mnt 2>/dev/null
+		if [ -d "/mnt/@" ]; then
+			btrfs_root_subvols=1
+			if [ -d "/mnt/@snapshots" ]; then
+				btrfs_has_snapshots=1
+			else
+				btrfs_has_snapshots=0
+			fi
+		fi
+		umount /mnt 2>/dev/null
+		if [ "${btrfs_opts_configured}" != "1" ]; then
+			choose_btrfs_mount_opts
+		fi
+	fi
+
+	if [ "${btrfs_root_subvols}" = "1" ]; then
+		echo "mount -o ${btrfs_opts},subvol=@ ${rootdev} /mnt"
+		mount -o ${btrfs_opts},subvol=@ ${rootdev} /mnt
+		mkdir -p /mnt/{boot,home,var/log,var/cache/pacman/pkg}
+		if [ -z "${homedev}" ]; then
+			echo "mount -o ${btrfs_opts},subvol=@home ${rootdev} /mnt/home"
+			mount -o ${btrfs_opts},subvol=@home ${rootdev} /mnt/home
+		fi
+		if [ "${btrfs_has_snapshots}" = "1" ]; then
+			mkdir -p /mnt/.snapshots
+			echo "mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots"
+			mount -o ${btrfs_opts},subvol=@snapshots ${rootdev} /mnt/.snapshots
+		fi
+		echo "mount -o ${btrfs_opts},subvol=@var_log ${rootdev} /mnt/var/log"
+		mount -o ${btrfs_opts},subvol=@var_log ${rootdev} /mnt/var/log
+		echo "mount -o ${btrfs_opts},subvol=@pkg ${rootdev} /mnt/var/cache/pacman/pkg"
+		mount -o ${btrfs_opts},subvol=@pkg ${rootdev} /mnt/var/cache/pacman/pkg
+	else
+		if [ "${fstype}" = "btrfs" ]; then
+			echo "mount -o ${btrfs_opts} ${rootdev} /mnt"
+			mount -o ${btrfs_opts} ${rootdev} /mnt
+		elif [ "${fstype}" = "ext4" ] || [ "${fstype}" = "xfs" ]; then
+			echo "mount -o rw,noatime ${rootdev} /mnt"
+			mount -o rw,noatime ${rootdev} /mnt
+		else
+			echo "mount ${rootdev} /mnt"
+			mount ${rootdev} /mnt
+		fi
+		mkdir -p /mnt/{boot,home} 2>/dev/null
+	fi
+
+	if [ ! "${bootdev}" = "" ]; then
+		mkdir -p /mnt/boot
+		echo "mount ${bootdev} /mnt/boot"
+		mount ${bootdev} /mnt/boot
+	fi
+	if [ ! "${swapdev}" = "" ]; then
+		echo "swapon ${swapdev}"
+		swapon ${swapdev}
+	fi
+	if [ ! "${homedev}" = "" ]; then
+		home_fstype=$(blkid -s TYPE -o value ${homedev} 2>/dev/null)
+		mkdir -p /mnt/home
+		if [ "${home_fstype}" = "btrfs" ]; then
+			mount -o ${btrfs_opts} ${homedev} /mnt/home
+		elif [ "${home_fstype}" = "ext4" ] || [ "${home_fstype}" = "xfs" ]; then
+			mount -o rw,noatime ${homedev} /mnt/home
+		else
+			mount ${homedev} /mnt/home
+		fi
+	fi
+
+	# Collect user credentials right now so the rest of the installation is 100% unattended
+	collect_user_and_system_inputs || return 1
+
+	# Launch full automatic installation
+	run_full_automatic_install
+}
+
+collect_user_and_system_inputs(){
+	# 1. Hostname
+	local hname
+	hname=$(dialog --backtitle "${apptitle}" --title "Nom de la machine (Hostname)" \
+		--inputbox "Entrez le nom d'hôte du TUXEDO Stellaris 16 :" 0 0 "${target_hostname}" 3>&1 1>&2 2>&3)
+	if [ "$?" = "0" ] && [ -n "${hname}" ]; then
+		target_hostname="${hname}"
+	fi
+
+	# 2. Username
+	while true; do
+		target_user=$(dialog --backtitle "${apptitle}" --title "Création de l'utilisateur" \
+			--inputbox "Entrez le nom de votre compte utilisateur (ex: opentux) :" 0 0 "opentux" 3>&1 1>&2 2>&3)
+		if [ "$?" != "0" ]; then
+			return 1
+		fi
+		if [ -n "${target_user}" ]; then
+			break
+		fi
+	done
+
+	# 3. User password (with confirmation)
+	while true; do
+		local p1 p2
+		p1=$(dialog --backtitle "${apptitle}" --title "Mot de passe pour ${target_user}" \
+			--insecure --passwordbox "Entrez le mot de passe pour l'utilisateur ${target_user} :" 0 0 3>&1 1>&2 2>&3)
+		if [ "$?" != "0" ]; then
+			return 1
+		fi
+		p2=$(dialog --backtitle "${apptitle}" --title "Confirmation du mot de passe" \
+			--insecure --passwordbox "Confirmez le mot de passe pour ${target_user} :" 0 0 3>&1 1>&2 2>&3)
+		if [ "$?" != "0" ]; then
+			return 1
+		fi
+		if [ -n "${p1}" ] && [ "${p1}" = "${p2}" ]; then
+			target_user_pass="${p1}"
+			break
+		else
+			dialog --backtitle "${apptitle}" --title "Erreur" --msgbox "Les mots de passe ne correspondent pas ou sont vides. Veuillez réessayer." 0 0
+		fi
+	done
+
+	# 4. Root password (same as user or custom)
+	if (dialog --backtitle "${apptitle}" --title "Mot de passe Root" \
+		--yesno "Utiliser le même mot de passe que '${target_user}' pour le compte administrateur (root) ?" 0 0); then
+		target_root_pass="${target_user_pass}"
+	else
+		while true; do
+			local rp1 rp2
+			rp1=$(dialog --backtitle "${apptitle}" --title "Mot de passe Root" \
+				--insecure --passwordbox "Entrez le mot de passe pour root :" 0 0 3>&1 1>&2 2>&3)
+			rp2=$(dialog --backtitle "${apptitle}" --title "Confirmation Mot de passe Root" \
+				--insecure --passwordbox "Confirmez le mot de passe pour root :" 0 0 3>&1 1>&2 2>&3)
+			if [ -n "${rp1}" ] && [ "${rp1}" = "${rp2}" ]; then
+				target_root_pass="${rp1}"
+				break
+			else
+				dialog --backtitle "${apptitle}" --title "Erreur" --msgbox "Les mots de passe root ne correspondent pas ou sont vides." 0 0
+			fi
+		done
+	fi
+
+	# 5. Passwordless sudo (NOPASSWD)
+	if (dialog --backtitle "${apptitle}" --title "Privilèges Sudo" \
+		--yesno "Activer sudo sans mot de passe (NOPASSWD) dans /etc/sudoers.d/${target_user} ?\n\n(Recommandé : Oui)" 0 0); then
+		target_user_nopasswd="1"
+	else
+		target_user_nopasswd="0"
+	fi
+
+	# 6. Bootloader choice (GRUB EFI default or systemd-boot)
+	local bl_options=()
+	bl_options+=("grub" "GRUB EFI (Recommandé)")
+	bl_options+=("systemd-boot" "systemd-boot EFI")
+	target_bootloader=$(dialog --backtitle "${apptitle}" --title "Chargeur d'amorçage (Bootloader)" \
+		--default-item "grub" --menu "Choisissez le bootloader à installer automatiquement :" 0 0 0 \
+		"${bl_options[@]}" 3>&1 1>&2 2>&3)
+	if [ "$?" != "0" ] || [ -z "${target_bootloader}" ]; then
+		target_bootloader="grub"
+	fi
+
+	return 0
+}
+
+# --------------------------------------------------------
+# Full Automatic Unattended Installation Engine
+# --------------------------------------------------------
+run_full_automatic_install(){
+	clear
+	echo "=============================================================================="
+	echo " LANCEMENT DE L'INSTALLATION AUTOMATIQUE — TUXEDO STELLARIS 16 (KDE PLASMA 6)"
+	echo "=============================================================================="
+	echo " - Machine      : ${target_hostname}"
+	echo " - Utilisateur  : ${target_user} (NOPASSWD=${target_user_nopasswd})"
+	echo " - Locale / Kbd : fr_FR.UTF-8 / Clavier AZERTY (fr) / Europe/Paris (UTC)"
+	echo " - Noyau        : linux-cachyos + headers + dkms + cachyos-settings"
+	echo " - Stockage     : Samsung 990 Pro NVMe + Scheduler I/O ADIOS + fstrim.timer"
+	echo " - RAM          : 96 Go + ZRAM (zstd, swappiness=180)"
+	echo " - GPU          : Intel 275HX + NVIDIA RTX 5090 175W (nvidia-open + CUDA + PRIME)"
+	echo " - TUXEDO       : tuxedo-drivers-dkms + tuxedo-control-center-bin + tccd"
+	echo " - Bureau       : KDE Plasma 6 Complet + PipeWire + Codecs + Polices + Apps"
+	echo " - Bootloader   : ${target_bootloader} + Plymouth (spinner) + mkinitcpio LZ4"
+	echo "=============================================================================="
+	echo ""
+
+	# ------------------------------------------------------------------
+	# [1/14] Reflector: Germany,France — 15 fastest HTTPS mirrors
+	# ------------------------------------------------------------------
+	echo ">>> [1/14] Optimisation des miroirs Pacman avec Reflector (Germany, France - 15 miroirs)..."
+	pacman -S --needed --noconfirm reflector 2>/dev/null || true
+	if command -v reflector >/dev/null 2>&1; then
+		reflector --country Germany,France --latest 15 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || true
+	fi
+
+	# ------------------------------------------------------------------
+	# [2/14] CachyOS Repositories + Pacman Optimization (Parallel=10, Color, Multilib)
+	# ------------------------------------------------------------------
+	echo ">>> [2/14] Configuration de Pacman (ParallelDownloads=10, Color, Multilib) & Dépôts CachyOS..."
+	optimize_pacman "/etc/pacman.conf"
+
+	cachy_arch="v3"
+	if /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v4 (supported"; then
+		cachy_arch="v4"
+	elif /usr/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q "x86-64-v3 (supported"; then
+		cachy_arch="v3"
+	elif grep -q "avx512f" /proc/cpuinfo 2>/dev/null && grep -q "avx512bw" /proc/cpuinfo 2>/dev/null; then
+		cachy_arch="v4"
+	fi
+	echo "Architecture CPU détectée : ${cachy_arch}"
+
+	pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com 2>/dev/null || \
+	pacman-key --recv-keys F3B607488DB35A47 --keyserver hkps://keyserver.ubuntu.com 2>/dev/null || true
+	pacman-key --lsign-key F3B607488DB35A47 2>/dev/null || true
+
+	mkdir -p /etc/pacman.d
+	cat << 'EOF' > /etc/pacman.d/cachyos-mirrorlist
+Server = https://mirror.cachyos.org/repo/x86_64/$repo
+Server = https://fastmirror.cachyos.org/repo/x86_64/$repo
+Server = https://in-mirror.cachyos.org/repo/x86_64/$repo
+Server = https://cdn77.cachyos.org/repo/x86_64/$repo
+EOF
+
+	if [ "${cachy_arch}" = "v4" ]; then
+		sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64 x86_64_v3 x86_64_v4/' /etc/pacman.conf
+		cat << 'EOF' > /etc/pacman.d/cachyos-v4-mirrorlist
+Server = https://mirror.cachyos.org/repo/x86_64_v4/$repo
+Server = https://fastmirror.cachyos.org/repo/x86_64_v4/$repo
+Server = https://in-mirror.cachyos.org/repo/x86_64_v4/$repo
+Server = https://cdn77.cachyos.org/repo/x86_64_v4/$repo
+EOF
+		cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos-v4]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+
+[cachyos-core-v4]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+
+[cachyos-extra-v4]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+
+[cachyos]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+	else
+		sed -i 's/^#*Architecture\s*=.*/Architecture = auto x86_64 x86_64_v3/' /etc/pacman.conf
+		cat << 'EOF' > /etc/pacman.d/cachyos-v3-mirrorlist
+Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo
+Server = https://fastmirror.cachyos.org/repo/x86_64_v3/$repo
+Server = https://in-mirror.cachyos.org/repo/x86_64_v3/$repo
+Server = https://cdn77.cachyos.org/repo/x86_64_v3/$repo
+EOF
+		cat << 'EOF' > /tmp/cachyos-repos.conf
+[cachyos-v3]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+
+[cachyos-core-v3]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+
+[cachyos-extra-v3]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+
+[cachyos]
+SigLevel = PackageRequired
+Include = /etc/pacman.d/cachyos-mirrorlist
+
+EOF
+	fi
+
+	sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /etc/pacman.conf 2>/dev/null || true
+	sed -i '/^\[core\]/e cat /tmp/cachyos-repos.conf' /etc/pacman.conf
+	rm -f /tmp/cachyos-repos.conf
+	pacman -Sy
+
+	# ------------------------------------------------------------------
+	# [3/14] Pacstrap Base System + CachyOS Kernel + Headers + DKMS
+	# ------------------------------------------------------------------
+	echo ">>> [3/14] Installation du système de base et du noyau CachyOS (pacstrap)..."
+	local mirrorlist_pkg="cachyos-v3-mirrorlist"
+	if [ "${cachy_arch}" = "v4" ]; then
+		mirrorlist_pkg="cachyos-v4-mirrorlist"
+	fi
+
+	local base_pkgs="base base-devel linux-cachyos linux-cachyos-headers dkms linux-firmware intel-ucode"
+	base_pkgs+=" cachyos-keyring cachyos-mirrorlist ${mirrorlist_pkg} cachyos-settings"
+	base_pkgs+=" zram-generator plymouth lz4 btrfs-progs dosfstools xfsprogs f2fs-tools efibootmgr grub"
+	base_pkgs+=" networkmanager iwd wireless-regdb sudo git wget curl nano vim bash-completion pacman-contrib reflector"
+
+	pacstrap /mnt ${base_pkgs}
+	local pacstrap_status=$?
+	if [ ${pacstrap_status} -ne 0 ]; then
+		echo "ERREUR CRITIQUE : pacstrap a échoué avec le code ${pacstrap_status}."
+		pressanykey
+		return 1
+	fi
+
+	# Propagate Pacman config, CachyOS repos, and Reflector mirrorlist into /mnt
+	optimize_pacman "/mnt/etc/pacman.conf"
+	mkdir -p /mnt/etc/pacman.d
+	cp -f /etc/pacman.d/mirrorlist /mnt/etc/pacman.d/mirrorlist 2>/dev/null || true
+	cp -f /etc/pacman.d/cachyos* /mnt/etc/pacman.d/ 2>/dev/null || true
+	sed -i 's|/\$arch_v3/|/x86_64_v3/|g; s|/\$arch/|/x86_64_v3/|g' /mnt/etc/pacman.d/cachyos-v3-mirrorlist 2>/dev/null || true
+	sed -i 's|/\$arch_v4/|/x86_64_v4/|g; s|/\$arch/|/x86_64_v4/|g' /mnt/etc/pacman.d/cachyos-v4-mirrorlist 2>/dev/null || true
+
+	local host_arch_line
+	host_arch_line=$(grep "^Architecture" /etc/pacman.conf | head -n 1)
+	if [ -n "${host_arch_line}" ]; then
+		sed -i "s/^#*Architecture\s*=.*/${host_arch_line}/" /mnt/etc/pacman.conf
+	fi
+	sed -i '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!d }' /mnt/etc/pacman.conf 2>/dev/null || true
+	sed -n '/^\[cachyos/,/^\[core\]/{ /^\[core\]/!p }' /etc/pacman.conf > /tmp/mnt-cachyos.conf
+	sed -i '/^\[core\]/e cat /tmp/mnt-cachyos.conf' /mnt/etc/pacman.conf
+	rm -f /tmp/mnt-cachyos.conf
+
+	arch-chroot /mnt pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com 2>/dev/null || true
+	arch-chroot /mnt pacman-key --lsign-key F3B607488DB35A47 2>/dev/null || true
+	arch-chroot /mnt pacman-key --populate archlinux cachyos 2>/dev/null || true
+	arch-chroot /mnt pacman -Sy
+
+	# ------------------------------------------------------------------
+	# [4/14] fstab & crypttab
+	# ------------------------------------------------------------------
+	echo ">>> [4/14] Génération de /etc/fstab (UUID)..."
+	genfstab -U -p /mnt > /mnt/etc/fstab
+	if [ "${luksdrive}" = "1" ] && [ -n "${crypttab}" ]; then
+		echo -e "${crypttab}" >> /mnt/etc/crypttab
+	fi
+
+	# ------------------------------------------------------------------
+	# [5/14] Timezone (Europe/Paris), UTC Hardware Clock, NTP & Hostname
+	# ------------------------------------------------------------------
+	echo ">>> [5/14] Configuration du fuseau horaire (Europe/Paris, UTC) et du nom d'hôte (${target_hostname})..."
+	ln -sf /usr/share/zoneinfo/Europe/Paris /mnt/etc/localtime
+	arch-chroot /mnt hwclock --systohc --utc
+	arch-chroot /mnt systemctl enable systemd-timesyncd.service 2>/dev/null || true
+
+	echo "${target_hostname}" > /mnt/etc/hostname
+	cat << EOF > /mnt/etc/hosts
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   ${target_hostname}.localdomain ${target_hostname}
+EOF
+
+	# ------------------------------------------------------------------
+	# [6/14] Full French Locale (fr_FR.UTF-8) & AZERTY Keyboard (fr)
+	# ------------------------------------------------------------------
+	echo ">>> [6/14] Configuration intégrale de la langue française (fr_FR.UTF-8) et du clavier AZERTY (fr)..."
+	sed -i 's/^#\(fr_FR.UTF-8 UTF-8\)/\1/' /mnt/etc/locale.gen
+	sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /mnt/etc/locale.gen
+	arch-chroot /mnt locale-gen
+
+	cat << 'EOF' > /mnt/etc/locale.conf
+LANG=fr_FR.UTF-8
+LC_COLLATE=C
+EOF
+	grep -q "^LANG=" /mnt/etc/environment 2>/dev/null || echo "LANG=fr_FR.UTF-8" >> /mnt/etc/environment
+	echo "KEYMAP=fr" > /mnt/etc/vconsole.conf
+
+	mkdir -p /mnt/etc/X11/xorg.conf.d /mnt/etc/xdg /mnt/etc/skel/.config
+	cat << 'EOF' > /mnt/etc/X11/xorg.conf.d/00-keyboard.conf
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "fr"
+        Option "XkbModel" "pc105"
+EndSection
+EOF
+
+	cat << 'EOF' > /mnt/etc/xdg/kxkbrc
+[Layout]
+DisplayNames=
+IncludeLabel=true
+LayoutList=fr
+LayoutLoopCount=1
+Model=pc105
+ResetOldOptions=false
+ShowFlag=false
+ShowLabel=true
+ShowLayoutIndicator=true
+ShowSingle=false
+SwitchMode=Global
+Use=true
+VariantList=
+EOF
+
+	cat << 'EOF' > /mnt/etc/xdg/plasma-localerc
+[Formats]
+LANG=fr_FR.UTF-8
+
+[Translations]
+LANGUAGE=fr_FR:fr
+EOF
+	cp -f /mnt/etc/xdg/kxkbrc /mnt/etc/skel/.config/kxkbrc
+	cp -f /mnt/etc/xdg/plasma-localerc /mnt/etc/skel/.config/plasma-localerc
+
+	mkdir -p /mnt/etc/dconf/profile /mnt/etc/dconf/db/local.d
+	cat << 'EOF' > /mnt/etc/dconf/profile/user
+user-db:user
+system-db:local
+EOF
+	cat << 'EOF' > /mnt/etc/dconf/db/local.d/00-keyboard
+[org/gnome/desktop/input-sources]
+sources=[('xkb', 'fr')]
+mru-sources=[('xkb', 'fr')]
+EOF
+
+	# ------------------------------------------------------------------
+	# [7/14] Root & User Creation + Sudoers + Fastfetch in .bashrc
+	# ------------------------------------------------------------------
+	echo ">>> [7/14] Création des comptes root et ${target_user} + configuration sudoers et fastfetch..."
+	echo "root:${target_root_pass}" | arch-chroot /mnt chpasswd
+
+	if ! arch-chroot /mnt id "${target_user}" &>/dev/null; then
+		arch-chroot /mnt useradd -m -G wheel,lp,sys,network,power,video,audio,storage,input -s /bin/bash "${target_user}"
+	fi
+	echo "${target_user}:${target_user_pass}" | arch-chroot /mnt chpasswd
+
+	if [ -f /mnt/etc/sudoers ]; then
+		sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
+		sed -i 's/^#\s*%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /mnt/etc/sudoers
+		sed -i 's/^#\s*#includedir \/etc\/sudoers.d/#includedir \/etc\/sudoers.d/' /mnt/etc/sudoers
+		grep -q "^#includedir /etc/sudoers.d" /mnt/etc/sudoers || echo "#includedir /etc/sudoers.d" >> /mnt/etc/sudoers
+	fi
+
+	mkdir -p /mnt/etc/sudoers.d
+	if [ "${target_user_nopasswd}" = "1" ]; then
+		echo "${target_user} ALL=(ALL:ALL) NOPASSWD: ALL" > "/mnt/etc/sudoers.d/${target_user}"
+		chmod 0440 "/mnt/etc/sudoers.d/${target_user}"
+	fi
+	# Temporary passwordless sudo during install for AUR builds
+	echo "${target_user} ALL=(ALL:ALL) NOPASSWD: ALL" > "/mnt/etc/sudoers.d/99-installer-temp"
+	chmod 0440 "/mnt/etc/sudoers.d/99-installer-temp"
+
+	# Configure fastfetch in .bashrc
+	for brc in /mnt/etc/skel/.bashrc "/mnt/home/${target_user}/.bashrc" /mnt/root/.bashrc; do
+		if [ -f "${brc}" ] && ! grep -q "fastfetch" "${brc}"; then
+			cat << 'EOF' >> "${brc}"
+
+# Launch fastfetch on interactive terminal startup
+if [[ $- == *i* ]] && command -v fastfetch >/dev/null 2>&1; then
+    fastfetch
+fi
+EOF
+		fi
+	done
+
+	mkdir -p "/mnt/home/${target_user}/.config"
+	cp -f /mnt/etc/xdg/kxkbrc "/mnt/home/${target_user}/.config/kxkbrc"
+	cp -f /mnt/etc/xdg/plasma-localerc "/mnt/home/${target_user}/.config/plasma-localerc"
+	arch-chroot /mnt chown -R "${target_user}:wheel" "/home/${target_user}" 2>/dev/null || true
+
+	# ------------------------------------------------------------------
+	# [8/14] GPU Stack: Intel 275HX + NVIDIA RTX 5090 175W Open + CUDA + PRIME
+	# ------------------------------------------------------------------
+	echo ">>> [8/14] Installation des pilotes GPU Hybrides (Intel Core Ultra 275HX + NVIDIA RTX 5090 Open + CUDA + PRIME)..."
+	# Intel Xe LPG (Arrow Lake 275HX) full stack + VA-API + OneVPL + OpenCL
+	arch-chroot /mnt pacman -S --needed --noconfirm \
+		mesa lib32-mesa \
+		intel-media-driver libva-intel-driver libva-utils vdpauinfo \
+		vulkan-intel lib32-vulkan-intel \
+		intel-compute-runtime vpl-gpu-rt
+
+	# NVIDIA Open (RTX 5090 Mobility Blackwell) + CUDA + PRIME + VA-API
+	# Prefer prebuilt linux-cachyos-nvidia-open if available in CachyOS repo, fallback to nvidia-open-dkms
+	if ! arch-chroot /mnt pacman -S --needed --noconfirm linux-cachyos-nvidia-open; then
+		arch-chroot /mnt pacman -S --needed --noconfirm nvidia-open-dkms
+	fi
+	arch-chroot /mnt pacman -S --needed --noconfirm \
+		nvidia-utils lib32-nvidia-utils nvidia-settings \
+		nvidia-prime libva-nvidia-driver opencl-nvidia \
+		cuda
+
+	mkdir -p /mnt/etc/modprobe.d
+	cat << 'EOF' > /mnt/etc/modprobe.d/nvidia.conf
+options nvidia_drm modeset=1 fbdev=1
+options nvidia NVreg_PreserveVideoMemoryAllocations=1
+EOF
+
+	# Enable NVIDIA Dynamic Boost (175W on RTX 5090 Laptop) & suspend/hibernate/resume services
+	arch-chroot /mnt systemctl enable nvidia-powerd.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable nvidia-suspend.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable nvidia-hibernate.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable nvidia-resume.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable nvidia-persistenced.service 2>/dev/null || true
+
+	# ------------------------------------------------------------------
+	# [9/14] Audio PipeWire + Multimedia Codecs + Base Fonts
+	# ------------------------------------------------------------------
+	echo ">>> [9/14] Installation de PipeWire, des codecs multimédia complets et des polices de base..."
+	arch-chroot /mnt pacman -S --needed --noconfirm \
+		pipewire pipewire-audio pipewire-pulse pipewire-alsa pipewire-jack \
+		wireplumber pavucontrol sof-firmware alsa-ucm-conf alsa-utils \
+		ffmpeg gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+		gst-plugins-ugly gst-libav gst-plugin-pipewire gst-plugin-va \
+		libdvdcss x264 x265 aom dav1d svt-av1 lame flac opus vorbis-tools \
+		ttf-dejavu ttf-liberation noto-fonts noto-fonts-cjk noto-fonts-emoji \
+		noto-fonts-extra ttf-ubuntu-font-family ttf-fira-code ttf-jetbrains-mono \
+		ttf-roboto cantarell-fonts gnu-free-fonts
+
+	# ------------------------------------------------------------------
+	# [10/14] Desktop Environment (KDE Plasma 6) & Applications
+	# ------------------------------------------------------------------
+	echo ">>> [10/14] Installation de KDE Plasma 6 complet, des packs de langue FR et des applications..."
+	arch-chroot /mnt pacman -S --needed --noconfirm \
+		plasma-desktop plasma-workspace konsole dolphin ark spectacle \
+		plasma-nm plasma-pa powerdevil kscreen breeze breeze-gtk \
+		kde-gtk-config kwalletmanager kwallet-pam kate okular gwenview \
+		kalk filelight partitionmanager bluedevil print-manager \
+		sddm sddm-kcm flatpak discover flatpak-kcm \
+		firefox firefox-i18n-fr hunspell-fr \
+		vivaldi vivaldi-ffmpeg-codecs bitwarden \
+		vlc smplayer smplayer-themes smplayer-skins mpv \
+		btop htop fastfetch nvtop inxi nmon p7zip unrar
+
+	arch-chroot /mnt systemctl enable sddm.service 2>/dev/null || true
+	arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+
+	# Ensure SDDM Xsetup has French keyboard
+	if [ -f /mnt/usr/share/sddm/scripts/Xsetup ]; then
+		grep -q "setxkbmap" /mnt/usr/share/sddm/scripts/Xsetup || echo "setxkbmap fr 2>/dev/null || true" >> /mnt/usr/share/sddm/scripts/Xsetup
+	fi
+	arch-chroot /mnt dconf update 2>/dev/null || true
+
+	# ------------------------------------------------------------------
+	# [11/14] System Services: NetworkManager, Bluetooth, CUPS + HPLIP, TRIM
+	# ------------------------------------------------------------------
+	echo ">>> [11/14] Installation et activation de Bluetooth, CUPS + HPLIP, NetworkManager et fstrim..."
+	arch-chroot /mnt pacman -S --needed --noconfirm \
+		bluez bluez-utils \
+		cups cups-pdf hplip system-config-printer \
+		avahi nss-mdns
+
+	arch-chroot /mnt systemctl enable NetworkManager.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable bluetooth.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable cups.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable avahi-daemon.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable fstrim.timer 2>/dev/null || true
+	arch-chroot /mnt systemctl enable paccache.timer 2>/dev/null || true
+
+	# ------------------------------------------------------------------
+	# [12/14] AUR Helper (yay) + TUXEDO Full Suite + TUXEDO Power Management
+	# ------------------------------------------------------------------
+	echo ">>> [12/14] Installation de yay et du support complet TUXEDO Stellaris 16 (drivers DKMS + TCC + gestion d'énergie)..."
+	if ! arch-chroot /mnt pacman -S --needed --noconfirm yay 2>/dev/null; then
+		arch-chroot /mnt su - "${target_user}" -c "
+			rm -rf /tmp/yay-bin
+			git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin
+			cd /tmp/yay-bin
+			makepkg -si --noconfirm
+			rm -rf /tmp/yay-bin
+		" || true
+	fi
+
+	# Install tuxedo-drivers-dkms, tuxedo-control-center-bin and google-chrome
+	if ! arch-chroot /mnt pacman -S --needed --noconfirm tuxedo-drivers-dkms tuxedo-control-center-bin 2>/dev/null; then
+		arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' tuxedo-drivers-dkms tuxedo-control-center-bin" || true
+	fi
+	if ! arch-chroot /mnt pacman -S --needed --noconfirm google-chrome 2>/dev/null; then
+		arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' google-chrome" || true
+	fi
+
+	# TUXEDO Power Management Tweaks: disable and mask conflicting services, enable tccd
+	echo "Configuration de la gestion d'énergie exclusive TUXEDO (masquage de power-profiles-daemon, tuned, tlp)..."
+	for srv in power-profiles-daemon.service tuned.service tuned-ppd.service tlp.service auto-cpufreq.service; do
+		arch-chroot /mnt systemctl disable "${srv}" 2>/dev/null || true
+		arch-chroot /mnt systemctl mask "${srv}" 2>/dev/null || true
+	done
+	arch-chroot /mnt systemctl unmask tccd.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable tccd.service 2>/dev/null || true
+	arch-chroot /mnt systemctl unmask tccd-sleep.service 2>/dev/null || true
+	arch-chroot /mnt systemctl enable tccd-sleep.service 2>/dev/null || true
+
+	# ------------------------------------------------------------------
+	# [13/14] Full CachyOS Pack: Ananicy-cpp, ADIOS I/O Scheduler, ZRAM,
+	#         Sysctl (split_lock_mitigate=0, max_map_count), Plymouth & mkinitcpio LZ4
+	# ------------------------------------------------------------------
+	echo ">>> [13/14] Application du Pack Complet CachyOS (ADIOS, ZRAM, Ananicy-cpp, Plymouth spinner, mkinitcpio LZ4, Sysctl)..."
+	arch-chroot /mnt pacman -S --needed --noconfirm ananicy-cpp cachyos-ananicy-rules cachyos-rate-mirrors 2>/dev/null || \
+	arch-chroot /mnt pacman -S --needed --noconfirm ananicy-cpp 2>/dev/null || true
+	arch-chroot /mnt systemctl enable ananicy-cpp.service 2>/dev/null || true
+
+	# 13a. ADIOS I/O Scheduler udev rules (for Samsung 990 Pro NVMe)
+	mkdir -p /mnt/etc/udev/rules.d
+	cat << 'EOF' > /mnt/etc/udev/rules.d/60-ioschedulers.rules
+# HDD
+ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", \
+    ATTR{queue/scheduler}="bfq"
+
+# SSD
+ACTION=="add|change", KERNEL=="sd[a-z]*|mmcblk[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+
+# NVMe SSD
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/rotational}=="0", \
+    ATTR{queue/scheduler}="adios"
+EOF
+
+	# 13b. ZRAM Configuration
+	mkdir -p /mnt/etc/systemd /mnt/etc/sysctl.d
+	cat << 'EOF' > /mnt/etc/systemd/zram-generator.conf
+[zram0]
+zram-size = ram
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+EOF
+	cat << 'EOF' > /mnt/etc/sysctl.d/99-zram.conf
+vm.swappiness = 180
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+EOF
+
+	# 13c. Plymouth (spinner) & mkinitcpio Optimization (lz4 -1, nvme + nvidia)
+	mkdir -p /mnt/etc/plymouth
+	cat << 'EOF' > /mnt/etc/plymouth/plymouthd.conf
+[Daemon]
+Theme=spinner
+ShowDelay=0
+EOF
+	arch-chroot /mnt plymouth-set-default-theme spinner 2>/dev/null || true
+
+	local mkconf="/mnt/etc/mkinitcpio.conf"
+	local modules_list="nvme nvidia nvidia_modeset nvidia_uvm nvidia_drm"
+	local hooks_list="systemd autodetect microcode modconf kms block filesystems plymouth"
+	if [ "${luksroot}" = "1" ] || [ "${luksdrive}" = "1" ]; then
+		hooks_list="systemd autodetect microcode modconf kms block sd-encrypt filesystems plymouth"
+	fi
+
+	sed -i "s|^MODULES=.*|MODULES=(${modules_list})|" "${mkconf}"
+	sed -i "s|^HOOKS=.*|HOOKS=(${hooks_list})|" "${mkconf}"
+	if grep -q "^COMPRESSION=" "${mkconf}"; then
+		sed -i 's|^COMPRESSION=.*|COMPRESSION="lz4"|' "${mkconf}"
+	else
+		echo 'COMPRESSION="lz4"' >> "${mkconf}"
+	fi
+	if grep -q "^COMPRESSION_OPTIONS=" "${mkconf}"; then
+		sed -i 's|^COMPRESSION_OPTIONS=.*|COMPRESSION_OPTIONS=(-1)|' "${mkconf}"
+	else
+		echo 'COMPRESSION_OPTIONS=(-1)' >> "${mkconf}"
+	fi
+	if grep -q "^MODULES_DECOMPRESS=" "${mkconf}"; then
+		sed -i 's|^MODULES_DECOMPRESS=.*|MODULES_DECOMPRESS="yes"|' "${mkconf}"
+	else
+		echo 'MODULES_DECOMPRESS="yes"' >> "${mkconf}"
+	fi
+
+	echo "Régénération des initramfs (mkinitcpio -P)..."
+	arch-chroot /mnt mkinitcpio -P
+
+	# 13d. Final Sysctl Tweaks (split_lock_mitigate=0, vm.max_map_count = 2147483642)
+	echo "Configuration des optimisations Sysctl (/etc/sysctl.d/99-splitlock.conf)..."
+	cat << 'EOF' > /mnt/etc/sysctl.d/99-splitlock.conf
+kernel.split_lock_mitigate=0
+vm.max_map_count = 2147483642
+EOF
+
+	# ------------------------------------------------------------------
+	# [14/14] Automatic Bootloader Installation (GRUB EFI or systemd-boot)
+	# ------------------------------------------------------------------
+	echo ">>> [14/14] Installation et configuration automatique du Bootloader (${target_bootloader})..."
+	local parent_disk
+	parent_disk=$(get_parent_disk "${realrootdev}")
+	local extra_kparams="quiet splash nvidia-drm.modeset=1 nvidia-drm.fbdev=1"
+
+	if [ "${target_bootloader}" = "systemd-boot" ]; then
+		arch-chroot /mnt bootctl --path=/boot install
+		local partuuid
+		partuuid=$(blkid -s PARTUUID -o value ${realrootdev} 2>/dev/null)
+		mkdir -p /mnt/boot/loader/entries
+		cat << 'EOF' > /mnt/boot/loader/loader.conf
+default arch.conf
+timeout 3
+console-mode max
+editor no
+EOF
+		local bootoptions="rw"
+		if [ "${luksroot}" = "1" ]; then
+			bootoptions="rd.luks.name=${luksrootuuid}=root cryptdevice=UUID=${luksrootuuid}:root root=/dev/mapper/root ${bootoptions}"
+		else
+			bootoptions="root=PARTUUID=${partuuid} ${bootoptions}"
+		fi
+		if [ "${btrfs_root_subvols}" = "1" ]; then
+			bootoptions="${bootoptions} rootflags=subvol=@"
+		fi
+		bootoptions="${bootoptions} ${extra_kparams}"
+
+		cat << EOF > /mnt/boot/loader/entries/arch.conf
+title   Arch Linux (CachyOS - TUXEDO Stellaris 16)
+linux   /vmlinuz-linux-cachyos
+initrd  /intel-ucode.img
+initrd  /initramfs-linux-cachyos.img
+options ${bootoptions}
+EOF
+		cat << EOF > /mnt/boot/loader/entries/arch-fallback.conf
+title   Arch Linux (CachyOS Fallback)
+linux   /vmlinuz-linux-cachyos
+initrd  /intel-ucode.img
+initrd  /initramfs-linux-cachyos-fallback.img
+options ${bootoptions}
+EOF
+	else
+		local grub_def="/mnt/etc/default/grub"
+		if [ -f "${grub_def}" ]; then
+			for kp in ${extra_kparams}; do
+				if ! grep "^GRUB_CMDLINE_LINUX_DEFAULT=" "${grub_def}" | grep -q "${kp}"; then
+					sed -i "s/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 ${kp}\"/" "${grub_def}"
+					sed -i 's/  */ /g' "${grub_def}"
+				fi
+			done
+			if [ "${luksroot}" = "1" ] && [ -n "${luksrootuuid}" ]; then
+				sed -i "/^GRUB_CMDLINE_LINUX=/c\GRUB_CMDLINE_LINUX=\"rd.luks.name=${luksrootuuid}=root cryptdevice=UUID=${luksrootuuid}:root\"" "${grub_def}"
+			fi
+		fi
+		if [ "${eficomputer}" = "1" ]; then
+			arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --recheck "${parent_disk}"
+		else
+			arch-chroot /mnt grub-install --target=i386-pc --recheck "${parent_disk}"
+		fi
+		arch-chroot /mnt mkdir -p /boot/grub
+		arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+	fi
+
+	# Cleanup temporary installer files
+	rm -f /mnt/etc/sudoers.d/99-installer-temp 2>/dev/null || true
+
+	echo ""
+	echo "=============================================================================="
+	echo " INSTALLATION AUTOMATIQUE TERMINÉE AVEC SUCCÈS ! (KDE PLASMA 6)"
+	echo "=============================================================================="
+	pressanykey
+
+	if (dialog --backtitle "${apptitle}" --title "Installation Terminée" \
+		--yesno "L'installation complète du TUXEDO Stellaris 16 (KDE Plasma 6) est terminée !\n\nVoulez-vous démonter les partitions et redémarrer maintenant ?" 0 0); then
+		clear
+		umount -R /mnt 2>/dev/null || true
+		swapoff -a 2>/dev/null || true
+		reboot
+	fi
+}
+
+# --------------------------------------------------------
+# Entry Point (French initialization out of the box)
+# --------------------------------------------------------
+echo "Initialisation en Français (Clavier AZERTY fr, locale fr_FR.UTF-8, Pacman)..."
+loadkeys fr 2>/dev/null || true
+if [ -f /etc/locale.gen ]; then
+	sed -i 's/^#\(fr_FR.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+	sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+	locale-gen >/dev/null 2>&1 || true
+fi
+export LANG=fr_FR.UTF-8
+
+optimize_pacman "/etc/pacman.conf"
+systemctl start pacman-init.service 2>/dev/null || true
+pacman -Sy --noconfirm archlinux-keyring 2>/dev/null || true
+pacman -S --needed --noconfirm arch-install-scripts dialog
+
+if [ -d /sys/firmware/efi/efivars ]; then
+	eficomputer=1
+	efimode=1
+else
+	eficomputer=0
+	efimode=0
+fi
+
+cat << 'EOF' > dialog.stellaris
+use_shadow = OFF
+title_color = (BLACK,WHITE,OFF)
+button_label_active_color = (WHITE,BLUE,ON)
+button_label_inactive_color = (BLACK,WHITE,OFF)
+tag_color = (BLACK,WHITE,OFF)
+tag_selected_color = (WHITE,BLUE,ON)
+tag_key_color = (BLACK,WHITE,OFF)
+tag_key_selected_color = (WHITE,BLUE,ON)
+check_color = tag_color
+check_selected_color = tag_selected_color
+EOF
+export DIALOGRC="dialog.stellaris"
+
+load_french_strings
+EDITOR=nano
+mainmenu
+rm -f dialog.stellaris
+exit 0

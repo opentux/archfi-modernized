@@ -99,6 +99,20 @@ Un gros travail d'actualisation a déjà été effectué pour adapter le script 
   - **Gaming (Optionnel)** : Steam, Lutris, MangoHud + GOverlay (`mangohud`, `lib32-mangohud`, `goverlay`), Feral GameMode (`gamemode`, `lib32-gamemode`), et **`proton-cachyos`** (avec `umu-launcher` & `wine-cachyos`).
   - **Archives** : `p7zip`, `unrar`.
 
+### 3. `stellaris16-plasma` & `stellaris16-gnome` (Full Auto — TUXEDO Stellaris 16)
+Deux scripts dédiés 100% automatiques conçus sur mesure pour le **TUXEDO Stellaris 16 (Intel Core Ultra 9 275HX, 96 Go RAM, Samsung 990 Pro NVMe, NVIDIA RTX 5090 Laptop 175W avec Advanced Optimus / Switch MUX)**, sans modifier les scripts originaux `archfi` et `archdi` :
+- **Étape interactive unique au départ** :
+  1. Partitionnement et formatage identiques à `archfi` (options de montage Btrfs `compress=zstd:1` ou mode Lab `nodatacow,nodatasum` sans snapshots).
+  2. Saisie immédiate après montage du `hostname` (`stellaris16`), du compte utilisateur + mot de passe (`sudo NOPASSWD`) et choix du bootloader (`GRUB EFI` ou `systemd-boot`).
+- **Exécution 100% automatique en 14 étapes sans interruption** :
+  - **Français intégral (`fr_FR.UTF-8`) & Clavier AZERTY (`fr`)** avant et après (Live ISO, console, X11, Wayland, SDDM/GDM, Plasma/GNOME, Firefox FR, `hunspell-fr`).
+  - **Synchronisation horaire** : fuseau `Europe/Paris` + horloge matérielle en `UTC` + `systemd-timesyncd`.
+  - **Reflector dès le départ** : 15 miroirs HTTPS les plus rapides sur `Germany,France`, `ParallelDownloads = 10`, `Color`, `ILoveCandy` et dépôt `[multilib]` d'office.
+  - **Pack Complet CachyOS** : dépôts `x86_64_v3`, noyau `linux-cachyos` + `linux-cachyos-headers` + `dkms` + `cachyos-settings`, démon `ananicy-cpp` + `cachyos-ananicy-rules`, scheduler I/O **`adios`** pour le Samsung 990 Pro NVMe, **ZRAM** (`zstd`, `swappiness=180`), **Plymouth (`spinner`)** + `mkinitcpio` (`lz4 -1`, modules `nvme` + `nvidia`), et optimisations **Sysctl** (`kernel.split_lock_mitigate=0`, `vm.max_map_count = 2147483642`).
+  - **GPU Hybride Intel 275HX + NVIDIA RTX 5090 175W Open + CUDA** : stack Intel (`intel-media-driver`, `vulkan-intel`, `intel-compute-runtime`, `vpl-gpu-rt`) + stack NVIDIA Open (`linux-cachyos-nvidia-open` / `nvidia-open-dkms`, `nvidia-utils` 32/64-bit, `nvidia-prime`, `libva-nvidia-driver`, `opencl-nvidia`, **`cuda`**) + service Dynamic Boost **`nvidia-powerd.service`** (175W) et services de veille NVIDIA.
+  - **Support Complet TUXEDO + `yay`** : installation directe de `yay`, `tuxedo-drivers-dkms`, `tuxedo-control-center-bin`, masquage des services d'énergie concurrents (`power-profiles-daemon`, `tuned`, `tlp`, `auto-cpufreq`) et activation de `tccd.service` / `tccd-sleep.service`.
+  - **Audio PipeWire + Codecs Multimédia + Polices de base + Services** : PipeWire complet, tous les codecs GStreamer/FFmpeg/AV1/x264/x265/DVD, polices complètes (Noto, DejaVu, Liberation, Ubuntu, Fira Code, JetBrains Mono, Roboto), **Bluetooth**, **CUPS + HPLIP**, **`fstrim.timer`**, et **`fastfetch`** automatique dans `.bashrc`.
+
 ---
 
 ## 🚧 En cours & Pistes pour l'avenir (WIP & Roadmap)
@@ -138,8 +152,11 @@ Clonez ou téléchargez les scripts dans votre environnement live :
 ```bash
 git clone https://github.com/opentux/archfi-modernized.git
 cd archfi-modernized
-chmod +x archfi archdi
+chmod +x archfi archdi stellaris16-plasma stellaris16-gnome
 ./archfi
+# Ou pour l'installation Full Auto dédiée TUXEDO Stellaris 16 :
+# ./stellaris16-plasma
+# ./stellaris16-gnome
 ```
 
 Suivez les menus guidés pour partitionner votre disque, installer la base système et le chargeur d'amorçage.
