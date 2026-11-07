@@ -893,9 +893,10 @@ collect_user_and_system_inputs(){
 		target_user_nopasswd="0"
 	fi
 
-	# 6. Bootloader choice (GRUB EFI default or systemd-boot)
+	# 6. Bootloader choice (GRUB EFI default, rEFInd or systemd-boot)
 	local bl_options=()
 	bl_options+=("grub" "GRUB EFI (Recommandé)")
+	bl_options+=("refind" "rEFInd EFI (Menu graphique moderne)")
 	bl_options+=("systemd-boot" "systemd-boot EFI")
 	target_bootloader=$(dialog --backtitle "${apptitle}" --title "Chargeur d'amorçage (Bootloader)" \
 		--default-item "grub" --menu "Choisissez le bootloader à installer automatiquement :" 0 0 0 \
@@ -923,7 +924,8 @@ run_full_automatic_install(){
 	echo " - RAM          : 96 Go + ZRAM (zstd, swappiness=180)"
 	echo " - GPU          : Intel 275HX + NVIDIA RTX 5090 175W (nvidia-open + CUDA + PRIME)"
 	echo " - TUXEDO       : tuxedo-drivers-dkms + tuxedo-control-center-bin + tccd"
-	echo " - Bureau       : GNOME Complet + GDM + PipeWire + Codecs + Polices + Apps"
+	echo " - Bureau       : GNOME + AppIndicator + Extension Manager + adw-gtk3-dark"
+	echo " - Gaming/Outils: CachyOS Gaming Meta/Apps + Proton/Wine CachyOS + Outils GUI CachyOS"
 	echo " - Bootloader   : ${target_bootloader} + Plymouth (spinner) + mkinitcpio LZ4"
 	echo "=============================================================================="
 	echo ""
@@ -1127,6 +1129,27 @@ EOF
 [org/gnome/desktop/input-sources]
 sources=[('xkb', 'fr')]
 mru-sources=[('xkb', 'fr')]
+
+[org/gnome/shell]
+disable-user-extensions=false
+enabled-extensions=['appindicatorsupport@rgcjonas.gmail.com']
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='adw-gtk3-dark'
+EOF
+
+	# Configure GTK3 & GTK4 dark theme (adw-gtk3-dark) for legacy windows in /etc/skel
+	mkdir -p /mnt/etc/skel/.config/gtk-3.0 /mnt/etc/skel/.config/gtk-4.0
+	cat << 'EOF' > /mnt/etc/skel/.config/gtk-3.0/settings.ini
+[Settings]
+gtk-theme-name=adw-gtk3-dark
+gtk-application-prefer-dark-theme=1
+EOF
+	cat << 'EOF' > /mnt/etc/skel/.config/gtk-4.0/settings.ini
+[Settings]
+gtk-theme-name=adw-gtk3-dark
+gtk-application-prefer-dark-theme=1
 EOF
 
 	# ------------------------------------------------------------------
@@ -1168,6 +1191,21 @@ fi
 EOF
 		fi
 	done
+
+	# Configure GTK3/GTK4 dark theme & first-login GNOME AppIndicator + adw-gtk3-dark activation for target_user
+	mkdir -p "/mnt/home/${target_user}/.config/gtk-3.0" "/mnt/home/${target_user}/.config/gtk-4.0" "/mnt/home/${target_user}/.config/autostart"
+	cp -f /mnt/etc/skel/.config/gtk-3.0/settings.ini "/mnt/home/${target_user}/.config/gtk-3.0/settings.ini"
+	cp -f /mnt/etc/skel/.config/gtk-4.0/settings.ini "/mnt/home/${target_user}/.config/gtk-4.0/settings.ini"
+
+	cat << 'EOF' > "/mnt/home/${target_user}/.config/autostart/stellaris-gnome-defaults.desktop"
+[Desktop Entry]
+Type=Application
+Name=Stellaris 16 GNOME Defaults (AppIndicator & adw-gtk3-dark)
+Exec=sh -c "gsettings set org.gnome.shell disable-user-extensions false; gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'; gsettings set org.gnome.desktop.interface gtk-theme 'adw-gtk3-dark'; gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com 2>/dev/null || true; rm -f ~/.config/autostart/stellaris-gnome-defaults.desktop"
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
 
 	arch-chroot /mnt chown -R "${target_user}:wheel" "/home/${target_user}" 2>/dev/null || true
 
@@ -1219,18 +1257,22 @@ EOF
 		ttf-roboto cantarell-fonts gnu-free-fonts
 
 	# ------------------------------------------------------------------
-	# [10/14] Desktop Environment (GNOME Complet) & Applications
+	# [10/14] Desktop Environment (GNOME Complet, AppIndicator, Extension Manager, adw-gtk-theme) & Applications
 	# ------------------------------------------------------------------
-	echo ">>> [10/14] Installation de GNOME complet, GDM, des packs de langue FR et des applications..."
+	echo ">>> [10/14] Installation de GNOME complet, AppIndicator, Extension Manager, adw-gtk-theme (dark), MPV, Vivaldi & Apps..."
 	arch-chroot /mnt pacman -S --needed --noconfirm \
-		gnome gnome-tweaks gnome-browser-connector \
+		gnome gnome-tweaks gnome-shell-extensions gnome-browser-connector \
+		gnome-shell-extension-appindicator adw-gtk-theme \
 		gdm file-roller gst-thumbnailers \
 		gvfs gvfs-mtp gvfs-smb gvfs-nfs \
 		flatpak gnome-software xdg-desktop-portal-gnome \
 		firefox firefox-i18n-fr hunspell-fr \
 		vivaldi vivaldi-ffmpeg-codecs bitwarden \
-		vlc smplayer smplayer-themes smplayer-skins mpv \
+		vlc mpv \
 		btop htop fastfetch nvtop inxi nmon p7zip unrar
+
+	# Install GNOME Extension Manager (extension-manager) from CachyOS repo
+	arch-chroot /mnt pacman -S --needed --noconfirm extension-manager 2>/dev/null || true
 
 	arch-chroot /mnt systemctl enable gdm.service 2>/dev/null || true
 	arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
@@ -1253,9 +1295,9 @@ EOF
 	arch-chroot /mnt systemctl enable paccache.timer 2>/dev/null || true
 
 	# ------------------------------------------------------------------
-	# [12/14] AUR Helper (yay) + TUXEDO Full Suite + TUXEDO Power Management
+	# [12/14] AUR Helper (yay) + TUXEDO Full Suite + CachyOS Gaming, Proton/Wine & CachyOS GUI Tools
 	# ------------------------------------------------------------------
-	echo ">>> [12/14] Installation de yay et du support complet TUXEDO Stellaris 16 (drivers DKMS + TCC + gestion d'énergie)..."
+	echo ">>> [12/14] Installation de yay, TUXEDO Stellaris 16, Pack Gaming CachyOS, Wine/Proton CachyOS & Outils Graphiques CachyOS..."
 	if ! arch-chroot /mnt pacman -S --needed --noconfirm yay 2>/dev/null; then
 		arch-chroot /mnt su - "${target_user}" -c "
 			rm -rf /tmp/yay-bin
@@ -1266,6 +1308,11 @@ EOF
 		" || true
 	fi
 
+	# Ensure GNOME Extension Manager is installed (if not already installed from CachyOS repo)
+	if ! arch-chroot /mnt pacman -Q extension-manager &>/dev/null; then
+		arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' extension-manager" || true
+	fi
+
 	# Install tuxedo-drivers-dkms, tuxedo-control-center-bin and google-chrome
 	if ! arch-chroot /mnt pacman -S --needed --noconfirm tuxedo-drivers-dkms tuxedo-control-center-bin 2>/dev/null; then
 		arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' tuxedo-drivers-dkms tuxedo-control-center-bin" || true
@@ -1273,6 +1320,56 @@ EOF
 	if ! arch-chroot /mnt pacman -S --needed --noconfirm google-chrome 2>/dev/null; then
 		arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' google-chrome" || true
 	fi
+
+	# Install CachyOS Graphical Tools (Kernel Manager, Sysctl Manager, Hello/Tweaks, Package Installer, Sched-ext GUI)
+	echo "Installation des outils graphiques CachyOS (Kernel Manager, Sysctl Manager, CachyOS Hello, Package Installer, scx-manager)..."
+	for cachy_gui_pkg in cachyos-kernel-manager cachyos-sysctl-manager cachyos-hello cachyos-packageinstaller scx-manager scx-scheds; do
+		arch-chroot /mnt pacman -S --needed --noconfirm "${cachy_gui_pkg}" 2>/dev/null || true
+	done
+
+	# Install CachyOS Gaming Meta & Gaming Applications + Proton CachyOS + Wine CachyOS + Wine Managers
+	echo "Installation du Pack Gaming CachyOS complet (cachyos-gaming-meta, cachyos-gaming-applications, proton-cachyos, wine-cachyos, Lutris, Heroic, Bottles, ProtonUp-Qt)..."
+	arch-chroot /mnt pacman -S --needed --noconfirm cachyos-gaming-meta cachyos-gaming-applications 2>/dev/null || true
+
+	# Ensure latest Wine CachyOS + Winetricks + Mono/Gecko
+	if ! arch-chroot /mnt pacman -S --needed --noconfirm wine-cachyos winetricks wine-mono wine-gecko zenity 2>/dev/null; then
+		arch-chroot /mnt pacman -S --needed --noconfirm wine-staging winetricks wine-mono wine-gecko zenity 2>/dev/null || true
+	fi
+
+	# Ensure Proton CachyOS, Steam, Lutris, MangoHud, GOverlay, GameMode, Gamescope
+	for game_pkg in proton-cachyos proton-cachyos-slr umu-launcher steam lutris gamescope gamemode lib32-gamemode mangohud lib32-mangohud goverlay vulkan-tools lib32-vulkan-icd-loader; do
+		arch-chroot /mnt pacman -S --needed --noconfirm "${game_pkg}" 2>/dev/null || true
+	done
+
+	# Install Wine & Proton Graphical Managers (Bottles, Heroic Games Launcher, ProtonUp-Qt, ProtonPlus)
+	for mgr_pkg in bottles heroic-games-launcher-bin protonup-qt protonplus; do
+		if ! arch-chroot /mnt pacman -S --needed --noconfirm "${mgr_pkg}" 2>/dev/null; then
+			arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' ${mgr_pkg}" 2>/dev/null || true
+		fi
+	done
+	# Fallback to Flatpak for Bottles if AUR build was skipped
+	if ! arch-chroot /mnt pacman -Q bottles &>/dev/null; then
+		arch-chroot /mnt flatpak install -y flathub com.usebottles.bottles 2>/dev/null || true
+	fi
+
+	# Gaming Tweaks (User groups, Esync/Fsync limits, NTSync kernel module, Shader Cache size boost)
+	echo "Application des Tweaks Gaming CachyOS (gamemode, limits Esync/Fsync, module ntsync, cache shaders 12 Go)..."
+	arch-chroot /mnt usermod -aG gamemode "${target_user}" 2>/dev/null || true
+	arch-chroot /mnt usermod -aG realtime "${target_user}" 2>/dev/null || true
+
+	mkdir -p /mnt/etc/security/limits.d /mnt/etc/modules-load.d
+	cat << 'EOF' > /mnt/etc/security/limits.d/99-gaming.conf
+*               hard    nofile          1048576
+*               soft    nofile          1048576
+*               hard    memlock         unlimited
+*               soft    memlock         unlimited
+@gamemode       -       nice            -10
+EOF
+	echo "ntsync" > /mnt/etc/modules-load.d/ntsync.conf
+	grep -q "__GL_SHADER_DISK_CACHE_SIZE" /mnt/etc/environment 2>/dev/null || cat << 'EOF' >> /mnt/etc/environment
+__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
+__GL_SHADER_DISK_CACHE_SIZE=12000000000
+EOF
 
 	# TUXEDO Power Management Tweaks: disable and mask conflicting services, enable tccd
 	echo "Configuration de la gestion d'énergie exclusive TUXEDO (masquage de power-profiles-daemon, tuned, tlp)..."
@@ -1371,7 +1468,7 @@ vm.max_map_count = 2147483642
 EOF
 
 	# ------------------------------------------------------------------
-	# [14/14] Automatic Bootloader Installation (GRUB EFI or systemd-boot)
+	# [14/14] Automatic Bootloader Installation (GRUB EFI, rEFInd or systemd-boot)
 	# ------------------------------------------------------------------
 	echo ">>> [14/14] Installation et configuration automatique du Bootloader (${target_bootloader})..."
 	local parent_disk
@@ -1413,6 +1510,31 @@ linux   /vmlinuz-linux-cachyos
 initrd  /intel-ucode.img
 initrd  /initramfs-linux-cachyos-fallback.img
 options ${bootoptions}
+EOF
+	elif [ "${target_bootloader}" = "refind" ]; then
+		arch-chroot /mnt pacman -S --needed --noconfirm refind
+		arch-chroot /mnt refind-install
+		local rootuuid
+		rootuuid=$(blkid -s UUID -o value ${realrootdev} 2>/dev/null)
+		local refind_opts="rw add_efi_memmap"
+		if [ "${luksroot}" = "1" ]; then
+			refind_opts="rd.luks.name=${luksrootuuid}=root cryptdevice=UUID=${luksrootuuid}:root root=/dev/mapper/root ${refind_opts}"
+		else
+			refind_opts="root=UUID=${rootuuid} ${refind_opts}"
+		fi
+		if [ "${btrfs_root_subvols}" = "1" ]; then
+			refind_opts="${refind_opts} rootflags=subvol=@"
+		fi
+		refind_opts="${refind_opts} ${extra_kparams}"
+
+		local ucode_param=""
+		if [ -f "/mnt/boot/intel-ucode.img" ]; then
+			ucode_param="initrd=/intel-ucode.img "
+		fi
+		cat << EOF > /mnt/boot/refind_linux.conf
+"Arch Linux (CachyOS)"          "${refind_opts} ${ucode_param}initrd=/initramfs-linux-cachyos.img"
+"Arch Linux (CachyOS Fallback)" "${refind_opts} ${ucode_param}initrd=/initramfs-linux-cachyos-fallback.img"
+"Arch Linux (Terminal)"         "${refind_opts} ${ucode_param}initrd=/initramfs-linux-cachyos.img systemd.unit=multi-user.target"
 EOF
 	else
 		local grub_def="/mnt/etc/default/grub"
