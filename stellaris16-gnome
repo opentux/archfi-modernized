@@ -1265,7 +1265,7 @@ EOF
 		gnome-shell-extension-appindicator adw-gtk-theme \
 		gdm file-roller gst-thumbnailers \
 		gvfs gvfs-mtp gvfs-smb gvfs-nfs \
-		flatpak gnome-software xdg-desktop-portal-gnome \
+		flatpak gnome-software xdg-desktop-portal-gnome xdg-desktop-portal-gtk \
 		firefox firefox-i18n-fr hunspell-fr \
 		vivaldi vivaldi-ffmpeg-codecs bitwarden \
 		vlc mpv \
@@ -1328,7 +1328,7 @@ EOF
 	done
 
 	# Install CachyOS Gaming Meta & Gaming Applications + Proton CachyOS + Wine CachyOS + Wine Managers
-	echo "Installation du Pack Gaming CachyOS complet (cachyos-gaming-meta, cachyos-gaming-applications, proton-cachyos, wine-cachyos, Lutris, Heroic, Bottles, ProtonUp-Qt)..."
+	echo "Installation du Pack Gaming CachyOS complet (cachyos-gaming-meta, cachyos-gaming-applications, proton-cachyos, wine-cachyos, Lutris, Heroic, Bottles, ProtonPlus)..."
 	arch-chroot /mnt pacman -S --needed --noconfirm cachyos-gaming-meta cachyos-gaming-applications 2>/dev/null || true
 
 	# Ensure latest Wine CachyOS + Winetricks + Mono/Gecko
@@ -1341,8 +1341,8 @@ EOF
 		arch-chroot /mnt pacman -S --needed --noconfirm "${game_pkg}" 2>/dev/null || true
 	done
 
-	# Install Wine & Proton Graphical Managers (Bottles, Heroic Games Launcher, ProtonUp-Qt, ProtonPlus)
-	for mgr_pkg in bottles heroic-games-launcher-bin protonup-qt protonplus; do
+	# Install Wine Graphical Managers (Bottles, Heroic Games Launcher)
+	for mgr_pkg in bottles heroic-games-launcher-bin; do
 		if ! arch-chroot /mnt pacman -S --needed --noconfirm "${mgr_pkg}" 2>/dev/null; then
 			arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' ${mgr_pkg}" 2>/dev/null || true
 		fi
@@ -1352,8 +1352,18 @@ EOF
 		arch-chroot /mnt flatpak install -y flathub com.usebottles.bottles 2>/dev/null || true
 	fi
 
-	# Gaming Tweaks (User groups, Esync/Fsync limits, NTSync kernel module, Shader Cache size boost)
-	echo "Application des Tweaks Gaming CachyOS (gamemode, limits Esync/Fsync, module ntsync, cache shaders 12 Go)..."
+	# Force full clean installation of ProtonPlus (GTK4/Libadwaita) from CachyOS repo + refresh icons & schemas
+	echo "Installation complète de ProtonPlus depuis les dépôts CachyOS et mise à jour des icônes GTK4..."
+	arch-chroot /mnt pacman -S --needed --noconfirm gtk4 libadwaita json-glib libsoup3 libgee libarchive hicolor-icon-theme desktop-file-utils 2>/dev/null || true
+	arch-chroot /mnt pacman -S --noconfirm protonplus 2>/dev/null || \
+	arch-chroot /mnt su - "${target_user}" -c "yay -S --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' protonplus" 2>/dev/null || true
+	arch-chroot /mnt gtk4-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+	arch-chroot /mnt gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+	arch-chroot /mnt update-desktop-database -q /usr/share/applications 2>/dev/null || true
+	arch-chroot /mnt glib-compile-schemas /usr/share/glib-2.0/schemas 2>/dev/null || true
+
+	# Gaming Tweaks (User groups, Esync/Fsync limits, NTSync kernel module, Unlimited NVIDIA Shader Cache)
+	echo "Application des Tweaks Gaming CachyOS (gamemode, limits Esync/Fsync, module ntsync, cache shaders NVIDIA illimité)..."
 	arch-chroot /mnt usermod -aG gamemode "${target_user}" 2>/dev/null || true
 	arch-chroot /mnt usermod -aG realtime "${target_user}" 2>/dev/null || true
 
@@ -1366,10 +1376,17 @@ EOF
 @gamemode       -       nice            -10
 EOF
 	echo "ntsync" > /mnt/etc/modules-load.d/ntsync.conf
-	grep -q "__GL_SHADER_DISK_CACHE_SIZE" /mnt/etc/environment 2>/dev/null || cat << 'EOF' >> /mnt/etc/environment
+	sed -i '/^__GL_SHADER_DISK_CACHE/d' /mnt/etc/environment 2>/dev/null || true
+	cat << 'EOF' >> /mnt/etc/environment
+__GL_SHADER_DISK_CACHE=1
 __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
-__GL_SHADER_DISK_CACHE_SIZE=12000000000
+__GL_SHADER_DISK_CACHE_SIZE=1000000000000
 EOF
+	for env_file in /mnt/usr/lib/environment.d/*cachyos*.conf /mnt/etc/environment.d/*.conf; do
+		if [ -f "${env_file}" ]; then
+			sed -i 's/^__GL_SHADER_DISK_CACHE_SIZE=.*/__GL_SHADER_DISK_CACHE_SIZE=1000000000000/' "${env_file}" 2>/dev/null || true
+		fi
+	done
 
 	# TUXEDO Power Management Tweaks: disable and mask conflicting services, enable tccd
 	echo "Configuration de la gestion d'énergie exclusive TUXEDO (masquage de power-profiles-daemon, tuned, tlp)..."

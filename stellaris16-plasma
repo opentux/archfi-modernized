@@ -893,9 +893,10 @@ collect_user_and_system_inputs(){
 		target_user_nopasswd="0"
 	fi
 
-	# 6. Bootloader choice (GRUB EFI default or systemd-boot)
+	# 6. Bootloader choice (GRUB EFI default, rEFInd or systemd-boot)
 	local bl_options=()
 	bl_options+=("grub" "GRUB EFI (Recommandé)")
+	bl_options+=("refind" "rEFInd EFI (Menu graphique moderne)")
 	bl_options+=("systemd-boot" "systemd-boot EFI")
 	target_bootloader=$(dialog --backtitle "${apptitle}" --title "Chargeur d'amorçage (Bootloader)" \
 		--default-item "grub" --menu "Choisissez le bootloader à installer automatiquement :" 0 0 0 \
@@ -923,7 +924,8 @@ run_full_automatic_install(){
 	echo " - RAM          : 96 Go + ZRAM (zstd, swappiness=180)"
 	echo " - GPU          : Intel 275HX + NVIDIA RTX 5090 175W (nvidia-open + CUDA + PRIME)"
 	echo " - TUXEDO       : tuxedo-drivers-dkms + tuxedo-control-center-bin + tccd"
-	echo " - Bureau       : KDE Plasma 6 Complet + PipeWire + Codecs + Polices + Apps"
+	echo " - Bureau       : KDE Plasma 6 Complet (Dark) + PipeWire + Codecs + Polices + MPV"
+	echo " - Gaming/Outils: CachyOS Gaming Meta/Apps + Proton/Wine CachyOS + ProtonUp-Qt + Outils GUI CachyOS"
 	echo " - Bootloader   : ${target_bootloader} + Plymouth (spinner) + mkinitcpio LZ4"
 	echo "=============================================================================="
 	echo ""
@@ -1035,7 +1037,7 @@ EOF
 
 	local base_pkgs="base base-devel linux-cachyos linux-cachyos-headers dkms linux-firmware intel-ucode"
 	base_pkgs+=" cachyos-keyring cachyos-mirrorlist ${mirrorlist_pkg} cachyos-settings"
-	base_pkgs+=" zram-generator plymouth lz4 btrfs-progs dosfstools xfsprogs f2fs-tools efibootmgr grub"
+	base_pkgs+=" zram-generator plymouth lz4 btrfs-progs dosfstools xfsprogs f2fs-tools efibootmgr grub refind"
 	base_pkgs+=" networkmanager iwd wireless-regdb sudo git wget curl nano vim bash-completion pacman-contrib reflector"
 
 	pacstrap /mnt ${base_pkgs}
@@ -1142,8 +1144,28 @@ LANG=fr_FR.UTF-8
 [Translations]
 LANGUAGE=fr_FR:fr
 EOF
+	cat << 'EOF' > /mnt/etc/xdg/kdeglobals
+[General]
+ColorScheme=BreezeDark
+
+[KDE]
+LookAndFeelPackage=org.kde.breezedark.desktop
+EOF
 	cp -f /mnt/etc/xdg/kxkbrc /mnt/etc/skel/.config/kxkbrc
 	cp -f /mnt/etc/xdg/plasma-localerc /mnt/etc/skel/.config/plasma-localerc
+	cp -f /mnt/etc/xdg/kdeglobals /mnt/etc/skel/.config/kdeglobals
+
+	mkdir -p /mnt/etc/skel/.config/gtk-3.0 /mnt/etc/skel/.config/gtk-4.0
+	cat << 'EOF' > /mnt/etc/skel/.config/gtk-3.0/settings.ini
+[Settings]
+gtk-theme-name=Breeze-Dark
+gtk-application-prefer-dark-theme=1
+EOF
+	cat << 'EOF' > /mnt/etc/skel/.config/gtk-4.0/settings.ini
+[Settings]
+gtk-theme-name=Breeze-Dark
+gtk-application-prefer-dark-theme=1
+EOF
 
 	mkdir -p /mnt/etc/dconf/profile /mnt/etc/dconf/db/local.d
 	cat << 'EOF' > /mnt/etc/dconf/profile/user
@@ -1196,9 +1218,12 @@ EOF
 		fi
 	done
 
-	mkdir -p "/mnt/home/${target_user}/.config"
+	mkdir -p "/mnt/home/${target_user}/.config/gtk-3.0" "/mnt/home/${target_user}/.config/gtk-4.0"
 	cp -f /mnt/etc/xdg/kxkbrc "/mnt/home/${target_user}/.config/kxkbrc"
 	cp -f /mnt/etc/xdg/plasma-localerc "/mnt/home/${target_user}/.config/plasma-localerc"
+	cp -f /mnt/etc/xdg/kdeglobals "/mnt/home/${target_user}/.config/kdeglobals"
+	cp -f /mnt/etc/skel/.config/gtk-3.0/settings.ini "/mnt/home/${target_user}/.config/gtk-3.0/settings.ini"
+	cp -f /mnt/etc/skel/.config/gtk-4.0/settings.ini "/mnt/home/${target_user}/.config/gtk-4.0/settings.ini"
 	arch-chroot /mnt chown -R "${target_user}:wheel" "/home/${target_user}" 2>/dev/null || true
 
 	# ------------------------------------------------------------------
@@ -1259,9 +1284,10 @@ EOF
 		kde-gtk-config kwalletmanager kwallet-pam kate okular gwenview \
 		kalk filelight partitionmanager bluedevil print-manager \
 		sddm sddm-kcm flatpak discover flatpak-kcm \
+		xdg-desktop-portal xdg-desktop-portal-kde xdg-desktop-portal-gtk \
 		firefox firefox-i18n-fr hunspell-fr \
 		vivaldi vivaldi-ffmpeg-codecs bitwarden \
-		vlc smplayer smplayer-themes smplayer-skins mpv \
+		vlc mpv \
 		btop htop fastfetch nvtop inxi nmon p7zip unrar
 
 	arch-chroot /mnt systemctl enable sddm.service 2>/dev/null || true
@@ -1290,9 +1316,9 @@ EOF
 	arch-chroot /mnt systemctl enable paccache.timer 2>/dev/null || true
 
 	# ------------------------------------------------------------------
-	# [12/14] AUR Helper (yay) + TUXEDO Full Suite + TUXEDO Power Management
+	# [12/14] AUR Helper (yay) + TUXEDO Full Suite + CachyOS Gaming/Wine/GUI Tools
 	# ------------------------------------------------------------------
-	echo ">>> [12/14] Installation de yay et du support complet TUXEDO Stellaris 16 (drivers DKMS + TCC + gestion d'énergie)..."
+	echo ">>> [12/14] Installation de yay, support complet TUXEDO, Outils Graphiques CachyOS et Suite Gaming/Wine/Proton CachyOS..."
 	if ! arch-chroot /mnt pacman -S --needed --noconfirm yay 2>/dev/null; then
 		arch-chroot /mnt su - "${target_user}" -c "
 			rm -rf /tmp/yay-bin
@@ -1310,6 +1336,66 @@ EOF
 	if ! arch-chroot /mnt pacman -S --needed --noconfirm google-chrome 2>/dev/null; then
 		arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' google-chrome" || true
 	fi
+
+	# 12a. CachyOS Graphical Tools (Kernel Manager, Sysctl Manager, Hello, PackageInstaller, SCX Manager)
+	echo "Installation des outils graphiques CachyOS (Kernel Manager, Sysctl Manager, Hello, PackageInstaller, SCX)..."
+	for cachy_gui_pkg in cachyos-kernel-manager cachyos-sysctl-manager cachyos-hello cachyos-packageinstaller scx-manager scx-scheds; do
+		arch-chroot /mnt pacman -S --needed --noconfirm "${cachy_gui_pkg}" 2>/dev/null || true
+	done
+
+	# 12b. CachyOS Complete Gaming Stack + Proton-CachyOS + Wine-CachyOS + Wine/Proton Managers (ProtonUp-Qt for Plasma)
+	echo "Installation du pack Gaming CachyOS au complet, Proton-CachyOS, Wine-CachyOS, ProtonUp-Qt et gestionnaires Wine..."
+	for game_meta in cachyos-gaming-meta cachyos-gaming-applications; do
+		arch-chroot /mnt pacman -S --needed --noconfirm "${game_meta}" 2>/dev/null || true
+	done
+
+	# Latest CachyOS Wine + Wine utilities (kdialog & zenity for Plasma/GTK dialogs)
+	if ! arch-chroot /mnt pacman -S --needed --noconfirm wine-cachyos winetricks wine-mono wine-gecko zenity kdialog 2>/dev/null; then
+		arch-chroot /mnt pacman -S --needed --noconfirm wine-staging winetricks wine-mono wine-gecko zenity kdialog 2>/dev/null || \
+		arch-chroot /mnt pacman -S --needed --noconfirm wine winetricks wine-mono wine-gecko zenity kdialog 2>/dev/null || true
+	fi
+
+	# Proton-CachyOS & Gaming Applications + Wine Managers (Lutris, Bottles, Heroic)
+	for game_pkg in proton-cachyos proton-cachyos-slr umu-launcher steam lutris gamescope gamemode lib32-gamemode mangohud lib32-mangohud goverlay bottles heroic-games-launcher-bin; do
+		if ! arch-chroot /mnt pacman -S --needed --noconfirm "${game_pkg}" 2>/dev/null; then
+			arch-chroot /mnt su - "${target_user}" -c "yay -S --needed --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' ${game_pkg}" 2>/dev/null || true
+		fi
+	done
+
+	# Full clean installation of ProtonUp-Qt from CachyOS repositories (specifically suited for KDE Plasma / Qt6)
+	echo "Installation complète de ProtonUp-Qt depuis les dépôts CachyOS (version Qt pour KDE Plasma)..."
+	arch-chroot /mnt pacman -S --needed --noconfirm qt6-base qt6-declarative qt6-wayland python-pyside6 hicolor-icon-theme desktop-file-utils 2>/dev/null || true
+	if ! arch-chroot /mnt pacman -S --noconfirm protonup-qt 2>/dev/null; then
+		arch-chroot /mnt su - "${target_user}" -c "yay -S --noconfirm --answerdiff None --answerclean None --mflags '--noconfirm' protonup-qt" 2>/dev/null || true
+	fi
+	arch-chroot /mnt gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+	arch-chroot /mnt update-desktop-database -q /usr/share/applications 2>/dev/null || true
+
+	# 12c. CachyOS Gaming Tweaks (gamemode/realtime groups, limits, ntsync, Unlimited NVIDIA shader cache)
+	echo "Application des Tweaks Gaming CachyOS (gamemode, esync/fsync limits, ntsync, cache shaders NVIDIA illimité)..."
+	arch-chroot /mnt gpasswd -a "${target_user}" gamemode 2>/dev/null || true
+	arch-chroot /mnt gpasswd -a "${target_user}" realtime 2>/dev/null || true
+	mkdir -p /mnt/etc/security/limits.d /mnt/etc/modules-load.d
+	cat << 'EOF' > /mnt/etc/security/limits.d/99-gaming.conf
+*               hard    nofile          1048576
+*               soft    nofile          1048576
+*               hard    memlock         unlimited
+*               soft    memlock         unlimited
+*               hard    nice            -20
+*               soft    nice            -20
+EOF
+	echo "ntsync" > /mnt/etc/modules-load.d/ntsync.conf
+	sed -i '/^__GL_SHADER_DISK_CACHE/d' /mnt/etc/environment 2>/dev/null || true
+	cat << 'EOF' >> /mnt/etc/environment
+__GL_SHADER_DISK_CACHE=1
+__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
+__GL_SHADER_DISK_CACHE_SIZE=1000000000000
+EOF
+	for env_file in /mnt/usr/lib/environment.d/*cachyos*.conf /mnt/etc/environment.d/*.conf; do
+		if [ -f "${env_file}" ]; then
+			sed -i 's/^__GL_SHADER_DISK_CACHE_SIZE=.*/__GL_SHADER_DISK_CACHE_SIZE=1000000000000/' "${env_file}" 2>/dev/null || true
+		fi
+	done
 
 	# TUXEDO Power Management Tweaks: disable and mask conflicting services, enable tccd
 	echo "Configuration de la gestion d'énergie exclusive TUXEDO (masquage de power-profiles-daemon, tuned, tlp)..."
@@ -1408,7 +1494,7 @@ vm.max_map_count = 2147483642
 EOF
 
 	# ------------------------------------------------------------------
-	# [14/14] Automatic Bootloader Installation (GRUB EFI or systemd-boot)
+	# [14/14] Automatic Bootloader Installation (GRUB EFI, systemd-boot, or rEFInd)
 	# ------------------------------------------------------------------
 	echo ">>> [14/14] Installation et configuration automatique du Bootloader (${target_bootloader})..."
 	local parent_disk
@@ -1450,6 +1536,26 @@ linux   /vmlinuz-linux-cachyos
 initrd  /intel-ucode.img
 initrd  /initramfs-linux-cachyos-fallback.img
 options ${bootoptions}
+EOF
+	elif [ "${target_bootloader}" = "refind" ]; then
+		arch-chroot /mnt pacman -S --needed --noconfirm refind 2>/dev/null || true
+		arch-chroot /mnt refind-install
+		local partuuid
+		partuuid=$(blkid -s PARTUUID -o value ${realrootdev} 2>/dev/null)
+		local bootoptions="rw"
+		if [ "${luksroot}" = "1" ]; then
+			bootoptions="rd.luks.name=${luksrootuuid}=root cryptdevice=UUID=${luksrootuuid}:root root=/dev/mapper/root ${bootoptions}"
+		else
+			bootoptions="root=PARTUUID=${partuuid} ${bootoptions}"
+		fi
+		if [ "${btrfs_root_subvols}" = "1" ]; then
+			bootoptions="${bootoptions} rootflags=subvol=@"
+		fi
+		bootoptions="${bootoptions} ${extra_kparams}"
+
+		cat << EOF > /mnt/boot/refind_linux.conf
+"Boot with CachyOS (TUXEDO Stellaris 16)"  "${bootoptions} initrd=\intel-ucode.img initrd=\initramfs-linux-cachyos.img"
+"Boot with CachyOS (Fallback)"             "${bootoptions} initrd=\intel-ucode.img initrd=\initramfs-linux-cachyos-fallback.img"
 EOF
 	else
 		local grub_def="/mnt/etc/default/grub"
